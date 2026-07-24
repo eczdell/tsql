@@ -10,7 +10,7 @@ pub enum AppAction {
     FetchTableData(String, String),
     FetchTableDataPage(String, String, usize),
     SwitchDatabase(String),
-    SaveConnection(crate::config::ConnectionConfig),
+    SaveConnection(crate::config::ConnectionConfig, Option<usize>),
 }
 
 pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
@@ -73,6 +73,7 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
         match key.code {
             KeyCode::Esc => {
                 app.is_adding_conn = false;
+                app.editing_conn_idx = None;
             }
             KeyCode::Tab | KeyCode::Down => {
                 app.conn_form_step = (app.conn_form_step + 1) % 6;
@@ -110,8 +111,10 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
                         dbname: if app.conn_input_dbname.is_empty() { "postgres".to_string() } else { app.conn_input_dbname.clone() },
                         sslmode: None,
                     };
+                    let edit_idx = app.editing_conn_idx;
                     app.is_adding_conn = false;
-                    return AppAction::SaveConnection(new_cfg);
+                    app.editing_conn_idx = None;
+                    return AppAction::SaveConnection(new_cfg, edit_idx);
                 }
             }
             KeyCode::Char(c) => {
@@ -213,6 +216,7 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
         KeyCode::Char('a') => {
             if app.active_tab == ActiveTab::Connections {
                 app.is_adding_conn = true;
+                app.editing_conn_idx = None;
                 app.conn_form_step = 0;
                 app.conn_input_name.clear();
                 app.conn_input_host = "127.0.0.1".to_string();
@@ -222,6 +226,22 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
                 app.conn_input_dbname = "postgres".to_string();
             } else if app.active_tab == ActiveTab::Relationships {
                 app.show_all_relationships = !app.show_all_relationships;
+            }
+        }
+        KeyCode::Char('e') | KeyCode::Char('u') => {
+            if app.active_tab == ActiveTab::Connections {
+                if !app.config.connections.is_empty() && app.selected_conn_idx < app.config.connections.len() {
+                    let conn = &app.config.connections[app.selected_conn_idx];
+                    app.conn_input_name = conn.name.clone();
+                    app.conn_input_host = conn.host.clone();
+                    app.conn_input_port = conn.port.to_string();
+                    app.conn_input_user = conn.user.clone();
+                    app.conn_input_pass = conn.password.clone().unwrap_or_default();
+                    app.conn_input_dbname = conn.dbname.clone();
+                    app.conn_form_step = 0;
+                    app.editing_conn_idx = Some(app.selected_conn_idx);
+                    app.is_adding_conn = true;
+                }
             }
         }
         KeyCode::Delete | KeyCode::Char('d') => {

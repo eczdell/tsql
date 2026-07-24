@@ -242,11 +242,19 @@ async fn run_app<B: ratatui::backend::Backend>(
                 let action = handle_key(key, app);
                 match action {
                     AppAction::Quit => break,
-                    AppAction::SaveConnection(new_cfg) => {
-                        app.config.connections.push(new_cfg);
-                        app.selected_conn_idx = app.config.connections.len() - 1;
+                    AppAction::SaveConnection(cfg, edit_idx_opt) => {
+                        if let Some(idx) = edit_idx_opt {
+                            if idx < app.config.connections.len() {
+                                app.config.connections[idx] = cfg;
+                                app.selected_conn_idx = idx;
+                                app.status_message = "Updated connection profile! Connecting...".to_string();
+                            }
+                        } else {
+                            app.config.connections.push(cfg);
+                            app.selected_conn_idx = app.config.connections.len() - 1;
+                            app.status_message = "Saved new connection profile! Connecting...".to_string();
+                        }
                         let _ = crate::config::save_config(&app.config);
-                        app.status_message = "Saved new connection profile! Connecting...".to_string();
                         attempt_connect(app).await;
                     }
                     AppAction::Connect => {

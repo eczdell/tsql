@@ -719,7 +719,7 @@ fn render_connections(f: &mut Frame, app: &AppState, area: Rect) {
     let list = List::new(items).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" Connections List (j/k=Nav, 'a'=Add, 'd'=Delete, Enter='c') ")
+            .title(" Connections List (j/k=Nav, 'a'=Add, 'e'=Edit, 'd'=Del, Enter='c') ")
             .border_style(Style::default().fg(Color::Yellow)),
     );
     f.render_widget(list, chunks[0]);
@@ -745,6 +745,7 @@ fn render_connections(f: &mut Frame, app: &AppState, area: Rect) {
             Line::from(Span::styled("  Actions:", Style::default().fg(Color::DarkGray))),
             Line::from(Span::styled("   • Press Enter or 'c' to connect to this server", Style::default().fg(Color::White))),
             Line::from(Span::styled("   • Press 'a' to add a new connection profile", Style::default().fg(Color::White))),
+            Line::from(Span::styled("   • Press 'e' or 'u' to edit/update this connection profile", Style::default().fg(Color::Yellow))),
             Line::from(Span::styled("   • Press 'd' or 'Delete' to remove this profile", Style::default().fg(Color::Red))),
         ];
 
@@ -762,9 +763,15 @@ fn render_connections(f: &mut Frame, app: &AppState, area: Rect) {
 }
 
 fn render_add_connection_modal(f: &mut Frame, app: &AppState, area: Rect) {
+    let title_text = if app.editing_conn_idx.is_some() {
+        " Edit Connection Profile (Press Tab/Enter to next step, Esc to Cancel) "
+    } else {
+        " Add New Connection Profile (Press Tab/Enter to next step, Esc to Cancel) "
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Add New Connection Profile (Press Tab/Enter to next step, Esc to Cancel) ")
+        .title(title_text)
         .border_style(Style::default().fg(Color::Green));
 
     let fields = [
@@ -802,7 +809,12 @@ fn render_add_connection_modal(f: &mut Frame, app: &AppState, area: Rect) {
     }
 
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("Press Enter on step 6 to Save & Connect!", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))));
+    let submit_hint = if app.editing_conn_idx.is_some() {
+        "Press Enter on step 6 to Save Updates & Connect!"
+    } else {
+        "Press Enter on step 6 to Save & Connect!"
+    };
+    lines.push(Line::from(Span::styled(submit_hint, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))));
 
     let p = Paragraph::new(lines).block(block);
     f.render_widget(p, area);

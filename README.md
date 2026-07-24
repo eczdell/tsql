@@ -68,6 +68,7 @@
 | --- | --- |
 | `j` / `k` | Navigate connection profiles |
 | `a` | **Add New Connection Profile** (step-by-step form) |
+| `e` or `u` | **Edit / Update Selected Connection Profile** |
 | `d` or `Delete` | **Delete Selected Connection Profile** |
 | `Enter` or `c` | **Connect to Selected Server Profile** |
 

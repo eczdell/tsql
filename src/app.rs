@@ -72,6 +72,7 @@ pub struct AppState {
     // Connection Switcher & Manager
     pub selected_conn_idx: usize,
     pub is_adding_conn: bool,
+    pub editing_conn_idx: Option<usize>,
     pub conn_form_step: usize,
     pub conn_input_name: String,
     pub conn_input_host: String,
@@ -127,6 +128,7 @@ impl AppState {
             cell_width: 22,
             selected_conn_idx: 0,
             is_adding_conn: false,
+            editing_conn_idx: None,
             conn_form_step: 0,
             conn_input_name: String::new(),
             conn_input_host: "127.0.0.1".to_string(),
