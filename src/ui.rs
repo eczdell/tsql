@@ -240,17 +240,27 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
                 let actual_col_idx = app.data_col_offset + c_idx;
                 let is_cell_selected = data_focused && r_idx == app.selected_data_row && actual_col_idx == app.selected_data_col;
                 
+                let w = app.cell_width.saturating_sub(2) as usize;
                 if is_cell_selected {
-                    let cell_content = format!("▶[ {} ]◀", c);
+                    let text = if c.len() > w {
+                        format!("▶[{}..]", &c[..w.saturating_sub(4)])
+                    } else {
+                        format!("▶[ {:<width$} ]◀", c, width = w.saturating_sub(6))
+                    };
                     let style = Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD);
-                    ratatui::widgets::Cell::from(Span::styled(cell_content, style))
+                    ratatui::widgets::Cell::from(Span::styled(text, style))
                 } else {
                     let style = if c == "NULL" {
                         Style::default().fg(Color::DarkGray)
                     } else {
                         Style::default().fg(Color::White)
                     };
-                    ratatui::widgets::Cell::from(Span::styled(format!(" {} ", c), style))
+                    let text = if c.len() > w {
+                        format!(" {}.. ", &c[..w.saturating_sub(4)])
+                    } else {
+                        format!(" {:<width$} ", c, width = w.saturating_sub(2))
+                    };
+                    ratatui::widgets::Cell::from(Span::styled(text, style))
                 }
             });
             Row::new(cells)
@@ -362,17 +372,27 @@ fn render_fullscreen_data(f: &mut Frame, app: &AppState, area: Rect) {
                 let actual_col_idx = app.data_col_offset + c_idx;
                 let is_cell_selected = r_idx == app.selected_data_row && actual_col_idx == app.selected_data_col;
                 
+                let w = app.cell_width.saturating_sub(2) as usize;
                 if is_cell_selected {
-                    let cell_content = format!("▶[ {} ]◀", c);
+                    let text = if c.len() > w {
+                        format!("▶[{}..]", &c[..w.saturating_sub(4)])
+                    } else {
+                        format!("▶[ {:<width$} ]◀", c, width = w.saturating_sub(6))
+                    };
                     let style = Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD);
-                    ratatui::widgets::Cell::from(Span::styled(cell_content, style))
+                    ratatui::widgets::Cell::from(Span::styled(text, style))
                 } else {
                     let style = if c == "NULL" {
                         Style::default().fg(Color::DarkGray)
                     } else {
                         Style::default().fg(Color::White)
                     };
-                    ratatui::widgets::Cell::from(Span::styled(format!(" {} ", c), style))
+                    let text = if c.len() > w {
+                        format!(" {}.. ", &c[..w.saturating_sub(4)])
+                    } else {
+                        format!(" {:<width$} ", c, width = w.saturating_sub(2))
+                    };
+                    ratatui::widgets::Cell::from(Span::styled(text, style))
                 }
             });
             Row::new(cells)
@@ -702,7 +722,11 @@ fn render_help(f: &mut Frame, _app: &AppState, area: Rect) {
         Line::from(vec![Span::styled("Tab           ", Style::default().fg(Color::Yellow)), Span::raw("Toggle focus between Tables panel and Data View panel")]),
         Line::from(vec![Span::styled("j, k, Up, Down", Style::default().fg(Color::Yellow)), Span::raw("Navigate table list / scroll table rows in Data View")]),
         Line::from(vec![Span::styled("n / p         ", Style::default().fg(Color::Yellow)), Span::raw("Next page / Previous page in Data View (50 rows/page)")]),
-        Line::from(vec![Span::styled("/ or f        ", Style::default().fg(Color::Yellow)), Span::raw("Fuzzy search/filter table list")]),
+        Line::from(vec![Span::styled("/             ", Style::default().fg(Color::Yellow)), Span::raw("Fuzzy search/filter table list")]),
+        Line::from(vec![Span::styled("Enter         ", Style::default().fg(Color::Yellow)), Span::raw("Jump to Relational Foreign Key table")]),
+        Line::from(vec![Span::styled("b / f         ", Style::default().fg(Color::Yellow)), Span::raw("Step Back / Step Forward in Breadcrumb history")]),
+        Line::from(vec![Span::styled("+ / -         ", Style::default().fg(Color::Yellow)), Span::raw("Zoom In / Zoom Out (Widen or Narrow table grid columns)")]),
+        Line::from(vec![Span::styled("m / z         ", Style::default().fg(Color::Yellow)), Span::raw("Toggle Fullscreen Data View mode")]),
         Line::from(vec![Span::styled("s             ", Style::default().fg(Color::Yellow)), Span::raw("Toggle system tables (information_schema, pg_catalog)")]),
         Line::from(vec![Span::styled("c             ", Style::default().fg(Color::Yellow)), Span::raw("Connect/reconnect to selected connection")]),
         Line::from(vec![Span::styled("r             ", Style::default().fg(Color::Yellow)), Span::raw("Refresh database schemas & table list")]),
