@@ -136,15 +136,6 @@ async fn refresh_tables(app: &mut AppState) {
     if let Some((schema, name)) = schema_table_to_fetch {
         fetch_table_schema_and_data(app, &schema, &name).await;
     }
-
-    if let Some(ref client) = app.client {
-        if let Ok(dbs) = db::execute_sql(client, "SELECT datname as database_name, pg_size_pretty(pg_database_size(datname)) as size, datcollate as collation FROM pg_database WHERE datistemplate = false;").await {
-            app.databases_result = Some(dbs);
-        }
-        if let Ok(users) = db::execute_sql(client, "SELECT rolname as username, rolsuper as is_superuser, rolcreaterole as can_create_role, rolcreatedb as can_create_db, rolcanlogin as can_login FROM pg_roles ORDER BY rolname;").await {
-            app.users_result = Some(users);
-        }
-    }
 }
 
 async fn fetch_table_schema_and_data(app: &mut AppState, schema: &str, table_name: &str) {
@@ -274,6 +265,26 @@ async fn run_app<B: ratatui::backend::Backend>(
                 }
             }
         }
+
+        // Lazy load active tab data on demand
+        match app.active_tab {
+            crate::app::ActiveTab::Databases if app.databases_result.is_none() => {
+                if let Some(ref client) = app.client {
+                    if let Ok(dbs) = db::execute_sql(client, "SELECT datname as database_name, pg_size_pretty(pg_database_size(datname)) as size, datcollate as collation FROM pg_database WHERE datistemplate = false;").await {
+                        app.databases_result = Some(dbs);
+                    }
+                }
+            }
+            crate::app::ActiveTab::Users if app.users_result.is_none() => {
+                if let Some(ref client) = app.client {
+                    if let Ok(users) = db::execute_sql(client, "SELECT rolname as username, rolsuper as is_superuser, rolcreaterole as can_create_role, rolcreatedb as can_create_db, rolcanlogin as can_login FROM pg_roles ORDER BY rolname;").await {
+                        app.users_result = Some(users);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
+
     Ok(())
 }
