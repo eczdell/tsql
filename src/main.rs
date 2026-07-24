@@ -266,8 +266,18 @@ async fn run_app<B: ratatui::backend::Backend>(
             }
         }
 
-        // Lazy load active tab data on demand
+        // Lazy load active tab data & selected table on demand
         match app.active_tab {
+            crate::app::ActiveTab::Browser => {
+                if let Some(tbl) = app.filtered_tables().get(app.selected_table_idx) {
+                    let cache_key = format!("{}.{}", tbl.schema, tbl.name);
+                    if !app.table_data_cache.contains_key(&cache_key) {
+                        let schema = tbl.schema.clone();
+                        let name = tbl.name.clone();
+                        fetch_table_schema_and_data(app, &schema, &name).await;
+                    }
+                }
+            }
             crate::app::ActiveTab::Databases if app.databases_result.is_none() => {
                 if let Some(ref client) = app.client {
                     if let Ok(dbs) = db::execute_sql(client, "SELECT datname as database_name, pg_size_pretty(pg_database_size(datname)) as size, datcollate as collation FROM pg_database WHERE datistemplate = false;").await {

@@ -32,9 +32,6 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
         }
         if changed {
             app.selected_table_idx = 0;
-            if let Some(tbl) = app.filtered_tables().get(0) {
-                return AppAction::FetchTableData(tbl.schema.clone(), tbl.name.clone());
-            }
         }
         return AppAction::None;
     }
@@ -291,9 +288,6 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
                         app.data_scroll_offset = 0;
                         app.selected_data_row = 0;
                         app.selected_data_col = 0;
-                        if let Some(tbl) = app.filtered_tables().get(app.selected_table_idx) {
-                            return AppAction::FetchTableData(tbl.schema.clone(), tbl.name.clone());
-                        }
                     }
                 }
             }
@@ -332,9 +326,6 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
                     app.data_scroll_offset = 0;
                     app.selected_data_row = 0;
                     app.selected_data_col = 0;
-                    if let Some(tbl) = app.filtered_tables().get(app.selected_table_idx) {
-                        return AppAction::FetchTableData(tbl.schema.clone(), tbl.name.clone());
-                    }
                 }
             }
             ActiveTab::Databases => {
