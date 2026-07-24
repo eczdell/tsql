@@ -56,6 +56,9 @@ pub struct AppState {
     pub query_result: Option<QueryResult>,
     pub query_error: Option<String>,
     pub result_scroll: usize,
+    pub selected_query_row: usize,
+    pub selected_query_col: usize,
+    pub query_col_offset: usize,
 
     // Table Data View & Grid Navigation
     pub table_data_result: Option<QueryResult>,
@@ -116,6 +119,9 @@ impl AppState {
             query_result: None,
             query_error: None,
             result_scroll: 0,
+            selected_query_row: 0,
+            selected_query_col: 0,
+            query_col_offset: 0,
             table_data_result: None,
             data_page: 0,
             data_scroll_offset: 0,

@@ -297,9 +297,18 @@ async fn run_app<B: ratatui::backend::Backend>(
                             let sql = app.sql_input.clone();
                             match db::execute_sql(client, &sql).await {
                                 Ok(res) => {
+                                    app.selected_query_row = 0;
+                                    app.selected_query_col = 0;
+                                    app.result_scroll = 0;
+                                    app.query_col_offset = 0;
+                                    if !res.rows.is_empty() {
+                                        app.focused_panel = crate::app::FocusedPanel::Results;
+                                        app.status_message = format!("Query returned {} rows! Navigating results (hjkl / Arrows)...", res.rows.len());
+                                    } else {
+                                        app.status_message = "Query executed successfully (0 rows returned).".to_string();
+                                    }
                                     app.query_result = Some(res);
                                     app.query_error = None;
-                                    app.status_message = "Query executed successfully.".to_string();
                                 }
                                 Err(err) => {
                                     app.query_result = None;
