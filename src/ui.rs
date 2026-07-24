@@ -302,11 +302,12 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
         };
 
         let title_text = format!(
-            " Data View{} — Page {} (R{} C{}){} [Enter=Jump, b/f=Nav, +/-=Zoom, m=Fullscreen] ",
+            " Data View{} — Page {} (R{} C{}) [Zoom: {}px]{} [Enter=Jump, b/f=Nav, +/-=Zoom, m=Fullscreen] ",
             breadcrumb_str,
             app.data_page + 1,
             app.selected_data_row + 1,
             app.selected_data_col + 1,
+            app.cell_width,
             fk_hint
         );
 
@@ -434,12 +435,13 @@ fn render_fullscreen_data(f: &mut Frame, app: &AppState, area: Rect) {
         };
 
         let title_text = format!(
-            " Fullscreen Data View: {}{} — Page {} (R{} C{}){} [Enter=Jump, b=Back, f=Forward, m/Esc=Exit] ",
+            " Fullscreen Data View: {}{} — Page {} (R{} C{}) [Zoom: {}px]{} [Enter=Jump, b=Back, f=Forward, m/Esc=Exit] ",
             selected_table_name,
             breadcrumb_str,
             app.data_page + 1,
             app.selected_data_row + 1,
             app.selected_data_col + 1,
+            app.cell_width,
             fk_hint
         );
 
