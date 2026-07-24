@@ -469,13 +469,27 @@ fn render_databases(f: &mut Frame, app: &AppState, area: Rect) {
         });
         let header = Row::new(header_cells).height(1);
 
+        let current_db_name = app.current_connection().map(|conn| conn.dbname.clone()).unwrap_or_default();
+
         let rows = res.rows.iter().enumerate().map(|(idx, row)| {
             let is_selected = idx == app.selected_db_idx;
             let cells = row.iter().enumerate().map(|(c_idx, c)| {
+                let is_active_db = c_idx == 0 && current_db_name == *c;
+                
                 if is_selected {
-                    ratatui::widgets::Cell::from(Span::styled(c.as_str(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)))
-                } else if c_idx == 0 && app.current_connection().map(|conn| conn.dbname.as_str()) == Some(c.as_str()) {
-                    ratatui::widgets::Cell::from(Span::styled(format!("● {}", c), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)))
+                    let text = if c_idx == 0 && is_active_db {
+                        format!("❯ ● {}", c)
+                    } else if c_idx == 0 {
+                        format!("❯   {}", c)
+                    } else {
+                        c.clone()
+                    };
+                    ratatui::widgets::Cell::from(Span::styled(text, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)))
+                } else if is_active_db {
+                    let text = format!("  ● {}", c);
+                    ratatui::widgets::Cell::from(Span::styled(text, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)))
+                } else if c_idx == 0 {
+                    ratatui::widgets::Cell::from(format!("    {}", c))
                 } else {
                     ratatui::widgets::Cell::from(c.as_str())
                 }
