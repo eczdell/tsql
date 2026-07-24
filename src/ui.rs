@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Table as RatatuiTable, Row, Tabs, Wrap},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Table as RatatuiTable, Row, Tabs, Wrap},
     Frame,
 };
 
@@ -26,6 +26,7 @@ pub fn render_ui(f: &mut Frame, app: &AppState) {
         ActiveTab::Users => render_users(f, app, main_chunks[1]),
         ActiveTab::QueryRunner => render_query_runner(f, app, main_chunks[1]),
         ActiveTab::Connections => render_connections(f, app, main_chunks[1]),
+        ActiveTab::Relationships => render_relationships(f, app, main_chunks[1]),
         ActiveTab::Help => render_help(f, app, main_chunks[1]),
     }
 
@@ -39,6 +40,7 @@ fn render_header(f: &mut Frame, app: &AppState, area: Rect) {
         " [3] Users/Roles ",
         " [4] Query Runner ",
         " [5] Connections ",
+        " [6] Relationships ",
         " [?] Help ",
     ];
     let selected_idx = match app.active_tab {
@@ -47,7 +49,8 @@ fn render_header(f: &mut Frame, app: &AppState, area: Rect) {
         ActiveTab::Users => 2,
         ActiveTab::QueryRunner => 3,
         ActiveTab::Connections => 4,
-        ActiveTab::Help => 5,
+        ActiveTab::Relationships => 5,
+        ActiveTab::Help => 6,
     };
 
     let conn_name = app.current_connection().map(|c| c.name.as_str()).unwrap_or("None");
@@ -77,14 +80,19 @@ fn render_header(f: &mut Frame, app: &AppState, area: Rect) {
 
     f.render_widget(tabs, area);
 
+    let mut header_spans = vec![conn_status];
+    if app.is_loading {
+        header_spans.push(Span::styled(" ⌛ [LOADING...] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+    }
+
     // Overlay connection indicator on the right of header
     let status_rect = Rect {
-        x: area.width.saturating_sub(25),
+        x: area.width.saturating_sub(45),
         y: area.y,
-        width: 24,
+        width: 44,
         height: 1,
     };
-    f.render_widget(Paragraph::new(conn_status), status_rect);
+    f.render_widget(Paragraph::new(Line::from(header_spans)).alignment(ratatui::layout::Alignment::Right), status_rect);
 }
 
 fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
@@ -114,15 +122,14 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
             ListItem::new(Line::from(vec![
                 Span::styled(prefix, Style::default().fg(Color::Cyan)),
                 Span::styled(&tbl.name, style),
-                Span::styled(format!(" ({})", tbl.schema), Style::default().fg(Color::DarkGray)),
             ]))
         })
         .collect();
 
     let filter_display = if app.is_filtering {
-        format!(" [Fuzzy Filter: {}█]", app.filter_text)
+        format!(" [{}█]", app.filter_text)
     } else if !app.filter_text.is_empty() {
-        format!(" [Fuzzy Filter: {}]", app.filter_text)
+        format!(" [{}]", app.filter_text)
     } else {
         " [Press / to Search]".to_string()
     };
@@ -181,13 +188,27 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
         .map(|t| t.name.as_str())
         .unwrap_or("None");
 
-    let col_list = List::new(col_items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" Columns: {} ", selected_table_name))
-            .border_style(Style::default().fg(Color::DarkGray)),
-    );
-    f.render_widget(col_list, right_chunks[0]);
+
+
+    if app.is_loading {
+        let loading_widget = Paragraph::new("\n  ⠋ Loading columns...")
+            .style(Style::default().fg(Color::Yellow))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!(" Columns: {} ", selected_table_name))
+                    .border_style(Style::default().fg(Color::DarkGray)),
+            );
+        f.render_widget(loading_widget, right_chunks[0]);
+    } else {
+        let col_list = List::new(col_items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" Columns: {} ", selected_table_name))
+                .border_style(Style::default().fg(Color::DarkGray)),
+        );
+        f.render_widget(col_list, right_chunks[0]);
+    }
 
     // Data Preview Table
     let data_focused = app.focused_panel == FocusedPanel::DataPreview;
@@ -201,7 +222,7 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
 
     if let Some(ref res) = app.table_data_result {
         let visible_cols = &res.columns[app.data_col_offset.min(res.columns.len())..];
-        let header_cells = visible_cols.iter().enumerate().map(|(rel_idx, h)| {
+        let mut header_cells: Vec<ratatui::widgets::Cell> = visible_cols.iter().enumerate().map(|(rel_idx, h)| {
             let actual_col_idx = app.data_col_offset + rel_idx;
             let is_col_selected = data_focused && actual_col_idx == app.selected_data_col;
             let is_pk = app.columns.iter().any(|c| c.name == *h && c.is_primary_key) || *h == "id";
@@ -231,16 +252,31 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
             };
             ratatui::widgets::Cell::from(Span::styled(col_name_fmt, style))
-        });
+        }).collect();
+        header_cells.push(ratatui::widgets::Cell::from("")); // Spacer column header
         let header = Row::new(header_cells).height(1);
+
+        let col_widths: Vec<usize> = visible_cols.iter().enumerate().map(|(rel_idx, col_name)| {
+            let actual_col_idx = app.data_col_offset + rel_idx;
+            let mut max_len = col_name.len() + 10;
+            for row in &res.rows {
+                if let Some(val) = row.get(actual_col_idx) {
+                    max_len = max_len.max(val.len());
+                }
+            }
+            let zoom_factor = app.cell_width as f32 / 22.0;
+            let final_width = ((max_len as f32) * zoom_factor) as usize;
+            final_width.max(10)
+        }).collect();
 
         let rows = res.rows.iter().enumerate().skip(app.data_scroll_offset).map(|(r_idx, row)| {
             let visible_cells = &row[app.data_col_offset.min(row.len())..];
-            let cells = visible_cells.iter().enumerate().map(|(c_idx, c)| {
+            let mut cells: Vec<ratatui::widgets::Cell> = visible_cells.iter().enumerate().map(|(c_idx, c)| {
                 let actual_col_idx = app.data_col_offset + c_idx;
                 let is_cell_selected = data_focused && r_idx == app.selected_data_row && actual_col_idx == app.selected_data_col;
                 
-                let w = app.cell_width.saturating_sub(2) as usize;
+                let col_w = col_widths.get(c_idx).copied().unwrap_or(22);
+                let w = col_w.saturating_sub(2);
                 if is_cell_selected {
                     let text = if c.len() > w {
                         format!("▶[{}..]", &c[..w.saturating_sub(4)])
@@ -262,11 +298,13 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
                     };
                     ratatui::widgets::Cell::from(Span::styled(text, style))
                 }
-            });
+            }).collect();
+            cells.push(ratatui::widgets::Cell::from("")); // Spacer column cell
             Row::new(cells)
         });
 
-        let widths: Vec<Constraint> = visible_cols.iter().map(|_| Constraint::Length(app.cell_width)).collect();
+        let mut widths: Vec<Constraint> = col_widths.iter().map(|&w| Constraint::Length(w as u16)).collect();
+        widths.push(Constraint::Min(0)); // Spacer column constraint
 
         // Check if currently selected cell is a Foreign Key or Relational ID
         let cur_col_name = res.columns.get(app.selected_data_col).cloned().unwrap_or_default();
@@ -315,6 +353,11 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
             .header(header)
             .block(data_block.title(title_text));
         f.render_widget(table_widget, right_chunks[1]);
+    } else if app.is_loading {
+        let loading_msg = Paragraph::new("\n  ⠋ Loading table records...")
+            .style(Style::default().fg(Color::Yellow))
+            .block(data_block.title(" Data View "));
+        f.render_widget(loading_msg, right_chunks[1]);
     } else {
         let empty_msg = Paragraph::new(" No table selected or empty data ")
             .block(data_block.title(" Data View "));
@@ -333,8 +376,17 @@ fn render_fullscreen_data(f: &mut Frame, app: &AppState, area: Rect) {
         .unwrap_or_else(|| "Table".to_string());
 
     if let Some(ref res) = app.table_data_result {
+        let filtered_rows: Vec<_> = if app.filter_data_text.is_empty() {
+            res.rows.iter().collect()
+        } else {
+            let query = app.filter_data_text.to_lowercase();
+            res.rows.iter().filter(|row| {
+                row.iter().any(|c| c.to_lowercase().contains(&query))
+            }).collect()
+        };
+
         let visible_cols = &res.columns[app.data_col_offset.min(res.columns.len())..];
-        let header_cells = visible_cols.iter().enumerate().map(|(rel_idx, h)| {
+        let mut header_cells: Vec<ratatui::widgets::Cell> = visible_cols.iter().enumerate().map(|(rel_idx, h)| {
             let actual_col_idx = app.data_col_offset + rel_idx;
             let is_col_selected = actual_col_idx == app.selected_data_col;
             let is_pk = app.columns.iter().any(|c| c.name == *h && c.is_primary_key) || *h == "id";
@@ -364,16 +416,31 @@ fn render_fullscreen_data(f: &mut Frame, app: &AppState, area: Rect) {
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
             };
             ratatui::widgets::Cell::from(Span::styled(col_name_fmt, style))
-        });
+        }).collect();
+        header_cells.push(ratatui::widgets::Cell::from("")); // Spacer column header
         let header = Row::new(header_cells).height(1);
 
-        let rows = res.rows.iter().enumerate().skip(app.data_scroll_offset).map(|(r_idx, row)| {
+        let col_widths: Vec<usize> = visible_cols.iter().enumerate().map(|(rel_idx, col_name)| {
+            let actual_col_idx = app.data_col_offset + rel_idx;
+            let mut max_len = col_name.len() + 10;
+            for row in &filtered_rows {
+                if let Some(val) = row.get(actual_col_idx) {
+                    max_len = max_len.max(val.len());
+                }
+            }
+            let zoom_factor = app.cell_width as f32 / 22.0;
+            let final_width = ((max_len as f32) * zoom_factor) as usize;
+            final_width.max(10)
+        }).collect();
+
+        let rows = filtered_rows.iter().enumerate().skip(app.data_scroll_offset).map(|(r_idx, row)| {
             let visible_cells = &row[app.data_col_offset.min(row.len())..];
-            let cells = visible_cells.iter().enumerate().map(|(c_idx, c)| {
+            let mut cells: Vec<ratatui::widgets::Cell> = visible_cells.iter().enumerate().map(|(c_idx, c)| {
                 let actual_col_idx = app.data_col_offset + c_idx;
                 let is_cell_selected = r_idx == app.selected_data_row && actual_col_idx == app.selected_data_col;
                 
-                let w = app.cell_width.saturating_sub(2) as usize;
+                let col_w = col_widths.get(c_idx).copied().unwrap_or(22);
+                let w = col_w.saturating_sub(2);
                 if is_cell_selected {
                     let text = if c.len() > w {
                         format!("▶[{}..]", &c[..w.saturating_sub(4)])
@@ -395,11 +462,13 @@ fn render_fullscreen_data(f: &mut Frame, app: &AppState, area: Rect) {
                     };
                     ratatui::widgets::Cell::from(Span::styled(text, style))
                 }
-            });
+            }).collect();
+            cells.push(ratatui::widgets::Cell::from("")); // Spacer column cell
             Row::new(cells)
         });
 
-        let widths: Vec<Constraint> = visible_cols.iter().map(|_| Constraint::Length(app.cell_width)).collect();
+        let mut widths: Vec<Constraint> = col_widths.iter().map(|&w| Constraint::Length(w as u16)).collect();
+        widths.push(Constraint::Min(0)); // Spacer column constraint
 
         // Check if currently selected cell is a Foreign Key or Relational ID
         let cur_col_name = res.columns.get(app.selected_data_col).cloned().unwrap_or_default();
@@ -409,7 +478,7 @@ fn render_fullscreen_data(f: &mut Frame, app: &AppState, area: Rect) {
             format!(" [🔗 FK -> {}.{} | Press Enter to Jump]", fk.foreign_table_schema, fk.foreign_table_name)
         } else if cur_col_name == "entity_id" {
             let target_name = if let Some(type_idx) = res.columns.iter().position(|c| c == "entity_type" || c == "entity") {
-                res.rows.get(app.selected_data_row).and_then(|r| r.get(type_idx)).cloned().unwrap_or_default()
+                filtered_rows.get(app.selected_data_row).and_then(|r| r.get(type_idx)).cloned().unwrap_or_default()
             } else {
                 "entity".to_string()
             };
@@ -434,9 +503,18 @@ fn render_fullscreen_data(f: &mut Frame, app: &AppState, area: Rect) {
             format!(" [{}] ", items.join(" ➔ "))
         };
 
+        let filter_display = if app.is_filtering_data {
+            format!(" [Filter: {}█]", app.filter_data_text)
+        } else if !app.filter_data_text.is_empty() {
+            format!(" [Filter: {}]", app.filter_data_text)
+        } else {
+            "".to_string()
+        };
+
         let title_text = format!(
-            " Fullscreen Data View: {}{} — Page {} (R{} C{}) [Zoom: {}px]{} [Enter=Jump, b=Back, f=Forward, m/Esc=Exit] ",
+            " Fullscreen Data View: {}{}{} — Page {} (R{} C{}) [Zoom: {}px]{} [Enter=Jump, b=Back, f=Forward, m/Esc=Exit] ",
             selected_table_name,
+            filter_display,
             breadcrumb_str,
             app.data_page + 1,
             app.selected_data_row + 1,
@@ -734,7 +812,7 @@ fn render_help(f: &mut Frame, _app: &AppState, area: Rect) {
     let help_text = vec![
         Line::from(Span::styled("tsql Keyboard Navigation", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
         Line::from(""),
-        Line::from(vec![Span::styled("1 - 5         ", Style::default().fg(Color::Yellow)), Span::raw("Switch tabs (Tables, Databases, Users, Query, Connections)")]),
+        Line::from(vec![Span::styled("1 - 6         ", Style::default().fg(Color::Yellow)), Span::raw("Switch tabs (Tables, Databases, Users, Query, Connections, Relationships)")]),
         Line::from(vec![Span::styled("Tab           ", Style::default().fg(Color::Yellow)), Span::raw("Toggle focus between Tables panel and Data View panel")]),
         Line::from(vec![Span::styled("j, k, Up, Down", Style::default().fg(Color::Yellow)), Span::raw("Navigate table list / scroll table rows in Data View")]),
         Line::from(vec![Span::styled("n / p         ", Style::default().fg(Color::Yellow)), Span::raw("Next page / Previous page in Data View (50 rows/page)")]),
@@ -764,4 +842,562 @@ fn render_status_bar(f: &mut Frame, app: &AppState, area: Rect) {
         Span::styled(" | Press '?' for help ", Style::default().fg(Color::DarkGray)),
     ]);
     f.render_widget(Paragraph::new(status_line), area);
+}
+
+struct Canvas {
+    width: usize,
+    height: usize,
+    cells: Vec<Vec<char>>,
+    styles: Vec<Vec<Style>>,
+    protected: Vec<Vec<bool>>,
+}
+
+impl Canvas {
+    fn new(width: usize, height: usize) -> Self {
+        Self {
+            width,
+            height,
+            cells: vec![vec![' '; width]; height],
+            styles: vec![vec![Style::default(); width]; height],
+            protected: vec![vec![false; width]; height],
+        }
+    }
+
+    fn set_cell(&mut self, x: usize, y: usize, c: char, style: Style) {
+        if x >= self.width || y >= self.height {
+            return;
+        }
+        if self.protected[y][x] {
+            return; // Protect boxes/text from being overwritten by connection lines!
+        }
+        let existing = self.cells[y][x];
+        let new_char = match (existing, c) {
+            ('━', '│') | ('│', '━') => '┼',
+            ('─', '│') | ('│', '─') => '┼',
+            _ => c,
+        };
+        self.cells[y][x] = new_char;
+        self.styles[y][x] = style;
+    }
+
+    fn set_cell_protected(&mut self, x: usize, y: usize, c: char, style: Style) {
+        if x >= self.width || y >= self.height {
+            return;
+        }
+        self.cells[y][x] = c;
+        self.styles[y][x] = style;
+        self.protected[y][x] = true;
+    }
+
+    fn draw_string(&mut self, x: usize, y: usize, s: &str, style: Style) {
+        let mut curr_x = x;
+        for c in s.chars() {
+            if curr_x >= self.width {
+                break;
+            }
+            self.set_cell_protected(curr_x, y, c, style);
+            curr_x += 1;
+        }
+    }
+
+    fn draw_box(&mut self, x: usize, y: usize, w: usize, h: usize, title: &str, border_style: Style, title_style: Style) {
+        for curr_x in x..(x + w) {
+            self.set_cell_protected(curr_x, y, '─', border_style);
+            self.set_cell_protected(curr_x, y + h - 1, '─', border_style);
+        }
+        for curr_y in y..(y + h) {
+            self.set_cell_protected(x, curr_y, '│', border_style);
+            self.set_cell_protected(x + w - 1, curr_y, '│', border_style);
+        }
+        self.set_cell_protected(x, y, '┌', border_style);
+        self.set_cell_protected(x + w - 1, y, '┐', border_style);
+        self.set_cell_protected(x, y + h - 1, '└', border_style);
+        self.set_cell_protected(x + w - 1, y + h - 1, '┘', border_style);
+
+        if h > 3 {
+            self.set_cell_protected(x, y + 2, '├', border_style);
+            for curr_x in (x + 1)..(x + w - 1) {
+                self.set_cell_protected(curr_x, y + 2, '─', border_style);
+            }
+            self.set_cell_protected(x + w - 1, y + 2, '┤', border_style);
+        }
+
+        if !title.is_empty() {
+            let title_y = if h > 3 { y + 1 } else { y };
+            let truncated_title = if title.chars().count() > w - 4 {
+                let take_chars: String = title.chars().take(w - 4).collect();
+                take_chars
+            } else {
+                title.to_string()
+            };
+            self.draw_string(x + 2, title_y, &truncated_title, title_style);
+        }
+    }
+}
+
+fn render_relationships(f: &mut Frame, app: &AppState, area: Rect) {
+    let is_fullscreen = app.focused_panel == FocusedPanel::DataPreview;
+
+    let (chunks, diagram_area) = if is_fullscreen {
+        (None, area)
+    } else {
+        let split_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+            .split(area);
+        (Some(split_chunks.clone()), split_chunks[1])
+    };
+
+    if let Some(ref split_chunks) = chunks {
+        let tables = app.filtered_tables();
+        let items: Vec<ListItem> = tables
+            .iter()
+            .enumerate()
+            .map(|(idx, tbl)| {
+                let is_sel = idx == app.selected_table_idx;
+                let prefix = if is_sel { "❯ " } else { "  " };
+                let style = if is_sel {
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                ListItem::new(Line::from(vec![
+                    Span::styled(prefix, Style::default().fg(Color::Cyan)),
+                    Span::styled(&tbl.name, style),
+                ]))
+            })
+            .collect();
+
+        let filter_display = if app.is_filtering {
+            format!(" [{}█]", app.filter_text)
+        } else if !app.filter_text.is_empty() {
+            format!(" [{}]", app.filter_text)
+        } else {
+            " [Press / to Search]".to_string()
+        };
+
+        let table_list = List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" Tables ({}){}", tables.len(), filter_display))
+                .border_style(if app.is_filtering || app.focused_panel == FocusedPanel::Tables {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                }),
+        );
+        f.render_widget(table_list, split_chunks[0]);
+    }
+
+    let right_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(2)])
+        .split(diagram_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Relationships ER Diagram ")
+        .border_style(if app.focused_panel == FocusedPanel::DataPreview {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        });
+
+    if app.all_foreign_keys.is_empty() {
+        let p = Paragraph::new("\n  No foreign key relationships found in database.")
+            .style(Style::default().fg(Color::DarkGray))
+            .block(block);
+        f.render_widget(p, right_chunks[0]);
+        return;
+    }
+
+    let selected_table = app.filtered_tables().get(app.selected_table_idx).cloned();
+
+    // Setup Canvas with dynamic viewport sizing & Zoom scale
+    let viewport_width = diagram_area.width as usize;
+    let viewport_height = diagram_area.height as usize;
+
+    let zoom = app.relationship_zoom;
+    let box_width = match zoom {
+        1 => 18,
+        2 => 24,
+        3 => 30,
+        _ => 36,
+    };
+    let spacing = match zoom {
+        1 => 12,
+        2 => 16,
+        3 => 20,
+        _ => 24,
+    };
+
+    let left_x = 4;
+    let center_x = left_x + box_width + spacing;
+    let right_x = center_x + box_width + spacing;
+
+    // Calculate layout coordinates
+    let (layout, col_coords) = crate::app::get_global_table_layout(&app.tables, &app.all_foreign_keys, zoom, app.layout_seed);
+
+    // Compute bounding canvas size
+    let mut canvas_width = viewport_width;
+    let mut canvas_height = viewport_height;
+
+    for (_, x, y, h) in &layout {
+        canvas_width = canvas_width.max(x + box_width + 4);
+        canvas_height = canvas_height.max(y + h + 15); // Extra padding for bypass lines
+    }
+
+    let mut canvas = Canvas::new(canvas_width, canvas_height);
+
+    // 1. Draw all table boxes
+    for ((schema, name), x, y, h) in &layout {
+        let is_selected_table = selected_table.as_ref()
+            .map(|st| st.schema == *schema && st.name == *name)
+            .unwrap_or(false);
+
+        let border_color = if is_selected_table { Color::Yellow } else { Color::DarkGray };
+        let title_color = if is_selected_table { Color::Yellow } else { Color::Cyan };
+
+        let border_style = Style::default().fg(border_color);
+        let title_style = Style::default().fg(title_color).add_modifier(Modifier::BOLD);
+
+        let title = format!("{}.{}", schema, name);
+        canvas.draw_box(*x, *y, box_width, *h, &title, border_style, title_style);
+
+        // Always draw key column fields
+        let mut key_cols = std::collections::BTreeSet::new();
+        for fk in &app.all_foreign_keys {
+            if fk.table_schema == *schema && fk.table_name == *name {
+                key_cols.insert(fk.column_name.clone());
+            }
+            if fk.foreign_table_schema == *schema && fk.foreign_table_name == *name {
+                key_cols.insert(fk.foreign_column_name.clone());
+            }
+        }
+        let mut col_y = y + 3;
+        for col in key_cols {
+            let is_fk = app.all_foreign_keys.iter().any(|fk| fk.table_schema == *schema && fk.table_name == *name && fk.column_name == col);
+            let is_pk = app.all_foreign_keys.iter().any(|fk| fk.foreign_table_schema == *schema && fk.foreign_table_name == *name && fk.foreign_column_name == col);
+
+            let badge = if is_fk && is_pk {
+                "[fk/pk]"
+            } else if is_fk {
+                "[fk]"
+            } else if is_pk {
+                "[pk]"
+            } else {
+                ""
+            };
+
+            let badge_style = if is_fk && is_pk {
+                Style::default().fg(Color::LightMagenta)
+            } else if is_fk {
+                Style::default().fg(Color::LightCyan)
+            } else if is_pk {
+                Style::default().fg(Color::LightGreen)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+
+            let name_style = if is_selected_table {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            let badge_len = if badge.is_empty() { 0 } else { badge.len() + 1 };
+            let max_name_len = (box_width.saturating_sub(4 + badge_len)).max(1);
+            let col_name_display = if col.chars().count() > max_name_len {
+                col.chars().take(max_name_len).collect::<String>()
+            } else {
+                col.clone()
+            };
+
+            canvas.draw_string(x + 2, col_y, &col_name_display, name_style);
+
+            if !badge.is_empty() {
+                let badge_x = (x + box_width - 1).saturating_sub(badge.len() + 1);
+                if badge_x >= x + 2 + col_name_display.chars().count() {
+                    canvas.draw_string(badge_x, col_y, badge, badge_style);
+                }
+            }
+
+            col_y += 1;
+        }
+    }
+
+    // Find vertical boundaries of all layout boxes
+    let mut global_min_y = 10;
+    let mut global_max_y = 10;
+    if !layout.is_empty() {
+        global_min_y = layout.iter().map(|(_, _, y, _)| *y).min().unwrap_or(10);
+        global_max_y = layout.iter().map(|(_, _, y, h)| y + h).max().unwrap_or(10);
+    }
+
+    // Filter relevant connection lines (Focused table by default to prevent visual clutter)
+    let relevant_fks: Vec<(usize, &crate::db::AllForeignKeyInfo)> = app.all_foreign_keys.iter().enumerate().filter(|(_, fk)| {
+        if app.show_all_relationships {
+            true
+        } else if let Some(ref st) = selected_table {
+            (fk.table_schema == st.schema && fk.table_name == st.name)
+                || (fk.foreign_table_schema == st.schema && fk.foreign_table_name == st.name)
+        } else {
+            false
+        }
+    }).collect();
+
+    // 2. Draw Connection Lines
+    for (active_idx, (_, fk)) in relevant_fks.into_iter().enumerate() {
+        let src_key = (fk.table_schema.clone(), fk.table_name.clone(), fk.column_name.clone());
+        let dst_key = (fk.foreign_table_schema.clone(), fk.foreign_table_name.clone(), fk.foreign_column_name.clone());
+
+        let src_tbl_x = layout.iter().find(|(key, _, _, _)| key.0 == fk.table_schema && key.1 == fk.table_name).map(|pos| pos.1);
+        let dst_tbl_x = layout.iter().find(|(key, _, _, _)| key.0 == fk.foreign_table_schema && key.1 == fk.foreign_table_name).map(|pos| pos.1);
+
+        if let (Some(sx_tbl), Some(dx_tbl), Some(&(_, src_y)), Some(&(_, dst_y))) = (src_tbl_x, dst_tbl_x, col_coords.get(&src_key), col_coords.get(&dst_key)) {
+            let src_x = if sx_tbl == left_x {
+                left_x + box_width - 1
+            } else if sx_tbl == right_x {
+                right_x
+            } else {
+                if dx_tbl == left_x {
+                    center_x
+                } else {
+                    center_x + box_width - 1
+                }
+            };
+
+            let dst_x = if dx_tbl == left_x {
+                left_x + box_width - 1
+            } else if dx_tbl == right_x {
+                right_x
+            } else {
+                if sx_tbl == left_x {
+                    center_x
+                } else {
+                    center_x + box_width - 1
+                }
+            };
+
+            let is_selected_conn = selected_table.as_ref()
+                .map(|st| (st.schema == fk.table_schema && st.name == fk.table_name) || (st.schema == fk.foreign_table_schema && st.name == fk.foreign_table_name))
+                .unwrap_or(false);
+
+            let line_color = if is_selected_conn { Color::Yellow } else { Color::DarkGray };
+            let line_style = Style::default().fg(line_color);
+
+            let max_tracks = ((spacing.saturating_sub(4)) / 2).max(1);
+            let is_bypass = (sx_tbl == left_x && dx_tbl == right_x) || (sx_tbl == right_x && dx_tbl == left_x);
+
+            if is_bypass {
+                // 5-segment bypass routing
+                let track_x1 = (left_x + box_width - 1) + 2 + (active_idx % max_tracks) * 2;
+                let track_x2 = right_x - 2 - (active_idx % max_tracks) * 2;
+
+                let bypass_y = if active_idx % 2 == 0 {
+                    global_min_y.saturating_sub(3 + (active_idx / 2) * 2)
+                } else {
+                    global_max_y + 3 + (active_idx / 2) * 2
+                };
+
+                let is_left_to_right = sx_tbl == left_x;
+
+                let (src_track_x, dst_track_x) = if is_left_to_right {
+                    (track_x1, track_x2)
+                } else {
+                    (track_x2, track_x1)
+                };
+
+                // 1. Horizontal from source to its gap track
+                let h1_start = src_x.min(src_track_x);
+                let h1_end = src_x.max(src_track_x);
+                for x in h1_start..=h1_end {
+                    canvas.set_cell(x, src_y, '━', line_style);
+                }
+                canvas.set_cell(src_x, src_y, '◉', line_style);
+
+                // 2. Vertical along source gap track to bypass_y
+                let v1_start = src_y.min(bypass_y);
+                let v1_end = src_y.max(bypass_y);
+                for y in v1_start..=v1_end {
+                    canvas.set_cell(src_track_x, y, '│', line_style);
+                }
+
+                // Corner at source track and src_y / bypass_y
+                if src_y > bypass_y {
+                    if is_left_to_right {
+                        canvas.set_cell(src_track_x, src_y, '┐', line_style);
+                        canvas.set_cell(src_track_x, bypass_y, '└', line_style);
+                    } else {
+                        canvas.set_cell(src_track_x, src_y, '┌', line_style);
+                        canvas.set_cell(src_track_x, bypass_y, '┘', line_style);
+                    }
+                } else {
+                    if is_left_to_right {
+                        canvas.set_cell(src_track_x, src_y, '┘', line_style);
+                        canvas.set_cell(src_track_x, bypass_y, '┌', line_style);
+                    } else {
+                        canvas.set_cell(src_track_x, src_y, '└', line_style);
+                        canvas.set_cell(src_track_x, bypass_y, '┐', line_style);
+                    }
+                }
+
+                // 3. Horizontal bypass line from src_track_x to dst_track_x
+                let h2_start = src_track_x.min(dst_track_x);
+                let h2_end = src_track_x.max(dst_track_x);
+                for x in h2_start..=h2_end {
+                    canvas.set_cell(x, bypass_y, '━', line_style);
+                }
+
+                // 4. Vertical along destination gap track from bypass_y to dst_y
+                let v2_start = dst_y.min(bypass_y);
+                let v2_end = dst_y.max(bypass_y);
+                for y in v2_start..=v2_end {
+                    canvas.set_cell(dst_track_x, y, '│', line_style);
+                }
+
+                // Corner at dst_track_x and bypass_y / dst_y
+                if bypass_y > dst_y {
+                    if is_left_to_right {
+                        canvas.set_cell(dst_track_x, bypass_y, '┘', line_style);
+                        canvas.set_cell(dst_track_x, dst_y, '┌', line_style);
+                    } else {
+                        canvas.set_cell(dst_track_x, bypass_y, '└', line_style);
+                        canvas.set_cell(dst_track_x, dst_y, '┐', line_style);
+                    }
+                } else {
+                    if is_left_to_right {
+                        canvas.set_cell(dst_track_x, bypass_y, '┐', line_style);
+                        canvas.set_cell(dst_track_x, dst_y, '└', line_style);
+                    } else {
+                        canvas.set_cell(dst_track_x, bypass_y, '┌', line_style);
+                        canvas.set_cell(dst_track_x, dst_y, '┘', line_style);
+                    }
+                }
+
+                // 5. Horizontal from destination track to dst_x
+                let h3_start = dst_x.min(dst_track_x);
+                let h3_end = dst_x.max(dst_track_x);
+                for x in h3_start..=h3_end {
+                    canvas.set_cell(x, dst_y, '━', line_style);
+                }
+                let arrow_char = if is_left_to_right { '▶' } else { '◄' };
+                canvas.set_cell(dst_x, dst_y, arrow_char, line_style);
+            } else {
+                // Standard 3-segment orthogonal routing (stays strictly within adjacent column gap)
+                let is_left_to_right = src_x < dst_x;
+
+                let track_x = if is_left_to_right {
+                    src_x + 2 + (active_idx % max_tracks) * 2
+                } else {
+                    src_x - 2 - (active_idx % max_tracks) * 2
+                };
+
+                // Draw horizontal from source to track_x
+                let h_start = src_x.min(track_x);
+                let h_end = src_x.max(track_x);
+                for x in h_start..=h_end {
+                    canvas.set_cell(x, src_y, '━', line_style);
+                }
+                canvas.set_cell(src_x, src_y, '◉', line_style);
+
+                // Draw vertical along track
+                let y_start = src_y.min(dst_y);
+                let y_end = src_y.max(dst_y);
+                for y in y_start..=y_end {
+                    canvas.set_cell(track_x, y, '│', line_style);
+                }
+
+                // Draw corners
+                if is_left_to_right {
+                    if src_y > dst_y {
+                        canvas.set_cell(track_x, src_y, '┘', line_style);
+                        canvas.set_cell(track_x, dst_y, '┌', line_style);
+                    } else if src_y < dst_y {
+                        canvas.set_cell(track_x, src_y, '┐', line_style);
+                        canvas.set_cell(track_x, dst_y, '└', line_style);
+                    }
+                } else {
+                    if src_y > dst_y {
+                        canvas.set_cell(track_x, src_y, '└', line_style);
+                        canvas.set_cell(track_x, dst_y, '┐', line_style);
+                    } else if src_y < dst_y {
+                        canvas.set_cell(track_x, src_y, '┌', line_style);
+                        canvas.set_cell(track_x, dst_y, '┘', line_style);
+                    }
+                }
+
+                // Draw horizontal from track back to target
+                let h2_start = dst_x.min(track_x);
+                let h2_end = dst_x.max(track_x);
+                for x in h2_start..=h2_end {
+                    canvas.set_cell(x, dst_y, '━', line_style);
+                }
+                let arrow_char = if is_left_to_right { '▶' } else { '◄' };
+                canvas.set_cell(dst_x, dst_y, arrow_char, line_style);
+            }
+        }
+    }
+
+    // 3. Center the Viewport on the Selected Table
+    let mut start_y = 0;
+    let mut start_x = 0;
+
+    if let Some(ref st) = selected_table {
+        if let Some(pos) = layout.iter().find(|(key, _, _, _)| key.0 == st.schema && key.1 == st.name) {
+            let (tbl_x, tbl_y, tbl_h) = (pos.1, pos.2, pos.3);
+            let center_y = (tbl_y + tbl_h / 2).saturating_sub(viewport_height / 2);
+            let center_x = (tbl_x + box_width / 2).saturating_sub(viewport_width / 2);
+            
+            start_y = (center_y as isize + app.diagram_scroll_offset_y).max(0) as usize;
+            start_x = (center_x as isize + app.diagram_scroll_offset_x).max(0) as usize;
+        }
+    }
+
+    // Clip scroll ranges
+    start_y = start_y.min(canvas_height.saturating_sub(viewport_height));
+    start_x = start_x.min(canvas_width.saturating_sub(viewport_width));
+
+    // Convert Canvas to Paragraph
+    let mut lines = Vec::new();
+    for y in start_y..(start_y + viewport_height).min(canvas_height) {
+        let mut line_spans = Vec::new();
+        for x in start_x..(start_x + viewport_width).min(canvas_width) {
+            let c = canvas.cells[y][x];
+            let style = canvas.styles[y][x];
+            line_spans.push(Span::styled(c.to_string(), style));
+        }
+        lines.push(Line::from(line_spans));
+    }
+
+    let current_table_name = selected_table.map(|st| format!("{}.{}", st.schema, st.name)).unwrap_or_else(|| "None".to_string());
+    let view_mode = if app.show_all_relationships { "All Lines" } else { "Focused View" };
+    let p = Paragraph::new(lines).block(block.title(format!(
+        " ER Diagram: {} [{}] ",
+        current_table_name,
+        view_mode
+    )));
+    f.render_widget(p, right_chunks[0]);
+
+    // Keyboard hints helper line
+    let keyboard_hints = Line::from(vec![
+        Span::styled("Keyboard: ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled("hjkl / Arrows ", Style::default().fg(Color::Yellow)),
+        Span::raw("Navigate  "),
+        Span::styled("Ctrl+d/u ", Style::default().fg(Color::Yellow)),
+        Span::raw("Scroll  "),
+        Span::styled("i/o ", Style::default().fg(Color::Yellow)),
+        Span::raw("Zoom  "),
+        Span::styled("a ", Style::default().fg(Color::Yellow)),
+        Span::raw("Toggle All Lines  "),
+        Span::styled("r ", Style::default().fg(Color::Yellow)),
+        Span::raw("Reposition  "),
+        Span::styled("Enter ", Style::default().fg(Color::Yellow)),
+        Span::raw("View Data  "),
+        Span::styled("Tab ", Style::default().fg(Color::Yellow)),
+        Span::raw("Sidebar  "),
+        Span::styled("Esc ", Style::default().fg(Color::Yellow)),
+        Span::raw("Exit"),
+    ]);
+    f.render_widget(Paragraph::new(vec![Line::from(""), keyboard_hints]), right_chunks[1]);
 }

@@ -15,7 +15,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{io, time::Duration};
 
 use crate::app::AppState;
-use crate::config::{load_config, save_config, ConnectionConfig};
+use crate::config::{load_config, ConnectionConfig};
 use crate::input::{handle_key, AppAction};
 
 #[derive(Parser, Debug)]
@@ -96,6 +96,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn attempt_connect(app: &mut AppState) {
     if let Some(conn_cfg) = app.current_connection().cloned() {
         app.status_message = format!("Connecting to {} ({}:{})...", conn_cfg.name, conn_cfg.host, conn_cfg.port);
+        // Load table cache immediately so UI doesn't look empty while connecting
+        if let Some(cached_tables) = db::load_table_cache(&conn_cfg.name) {
+            app.tables = cached_tables;
+            app.selected_table_idx = 0;
+            app.update_filtered_tables();
+        }
         match db::connect(&conn_cfg).await {
             Ok(client) => {
                 app.client = Some(client);
@@ -118,10 +124,20 @@ async fn refresh_tables(app: &mut AppState) {
     let mut schema_table_to_fetch = None;
 
     if let Some(ref client) = app.client {
+        if let Ok(all_fks) = db::fetch_all_foreign_keys(client).await {
+            app.all_foreign_keys = all_fks;
+        } else {
+            app.all_foreign_keys.clear();
+        }
         match db::fetch_tables(client).await {
             Ok(tables) => {
+                // Save to persistent file cache
+                if let Some(conn_cfg) = app.current_connection() {
+                    let _ = db::save_table_cache(&conn_cfg.name, &tables);
+                }
                 app.tables = tables;
                 app.selected_table_idx = 0;
+                app.update_filtered_tables();
                 let filtered = app.filtered_tables();
                 if let Some(first) = filtered.first() {
                     schema_table_to_fetch = Some((first.schema.clone(), first.name.clone()));
@@ -150,7 +166,10 @@ async fn fetch_table_schema_and_data(app: &mut AppState, schema: &str, table_nam
         hit_cols = true;
     }
 
-    if let Some(cached_data) = app.table_data_cache.get(&cache_key) {
+    if app.is_filtering {
+        app.table_data_result = None;
+        hit_data = true;
+    } else if let Some(cached_data) = app.table_data_cache.get(&cache_key) {
         app.table_data_result = Some(cached_data.clone());
         hit_data = true;
     }
@@ -230,16 +249,39 @@ async fn run_app<B: ratatui::backend::Backend>(
                         app.status_message = "Saved new connection profile! Connecting...".to_string();
                         attempt_connect(app).await;
                     }
-                    AppAction::Connect => attempt_connect(app).await,
-                    AppAction::RefreshTables => refresh_tables(app).await,
-                    AppAction::FetchTableData(schema, tbl) => fetch_table_schema_and_data(app, &schema, &tbl).await,
-                    AppAction::FetchTableDataPage(schema, tbl, page) => fetch_table_data_page(app, &schema, &tbl, page).await,
+                    AppAction::Connect => {
+                        app.is_loading = true;
+                        let _ = terminal.draw(|f| ui::render_ui(f, app));
+                        attempt_connect(app).await;
+                        app.is_loading = false;
+                    }
+                    AppAction::RefreshTables => {
+                        app.is_loading = true;
+                        let _ = terminal.draw(|f| ui::render_ui(f, app));
+                        refresh_tables(app).await;
+                        app.is_loading = false;
+                    }
+                    AppAction::FetchTableData(schema, tbl) => {
+                        app.is_loading = true;
+                        let _ = terminal.draw(|f| ui::render_ui(f, app));
+                        fetch_table_schema_and_data(app, &schema, &tbl).await;
+                        app.is_loading = false;
+                    }
+                    AppAction::FetchTableDataPage(schema, tbl, page) => {
+                        app.is_loading = true;
+                        let _ = terminal.draw(|f| ui::render_ui(f, app));
+                        fetch_table_data_page(app, &schema, &tbl, page).await;
+                        app.is_loading = false;
+                    }
                     AppAction::SwitchDatabase(db_name) => {
                         if let Some(conn) = app.config.connections.get_mut(app.selected_conn_idx) {
                             conn.dbname = db_name.clone();
                             app.status_message = format!("Switched active database to '{}'. Reconnecting...", db_name);
                         }
+                        app.is_loading = true;
+                        let _ = terminal.draw(|f| ui::render_ui(f, app));
                         attempt_connect(app).await;
+                        app.is_loading = false;
                         app.active_tab = crate::app::ActiveTab::Browser;
                     }
                     AppAction::ExecuteQuery => {
@@ -269,12 +311,18 @@ async fn run_app<B: ratatui::backend::Backend>(
         // Lazy load active tab data & selected table on demand
         match app.active_tab {
             crate::app::ActiveTab::Browser => {
-                if let Some(tbl) = app.filtered_tables().get(app.selected_table_idx) {
+                if app.is_filtering {
+                    app.columns.clear();
+                    app.table_data_result = None;
+                } else if let Some(tbl) = app.filtered_tables().get(app.selected_table_idx) {
                     let cache_key = format!("{}.{}", tbl.schema, tbl.name);
-                    if !app.table_data_cache.contains_key(&cache_key) {
+                    if app.table_data_result.is_none() || !app.table_data_cache.contains_key(&cache_key) {
                         let schema = tbl.schema.clone();
                         let name = tbl.name.clone();
+                        app.is_loading = true;
+                        let _ = terminal.draw(|f| ui::render_ui(f, app));
                         fetch_table_schema_and_data(app, &schema, &name).await;
+                        app.is_loading = false;
                     }
                 }
             }

@@ -14,11 +14,43 @@ pub enum AppAction {
 }
 
 pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
+    if app.is_filtering_data {
+        let mut changed = false;
+        match key.code {
+            KeyCode::Esc => {
+                app.is_filtering_data = false;
+            }
+            KeyCode::Enter => {
+                app.is_filtering_data = false;
+            }
+            KeyCode::Backspace => {
+                app.filter_data_text.pop();
+                changed = true;
+            }
+            KeyCode::Char(c) => {
+                app.filter_data_text.push(c);
+                changed = true;
+            }
+            _ => {}
+        }
+        if changed {
+            app.data_scroll_offset = 0;
+            app.selected_data_row = 0;
+        }
+        return AppAction::None;
+    }
+
     if app.is_filtering {
         let mut changed = false;
         match key.code {
-            KeyCode::Esc | KeyCode::Enter => {
+            KeyCode::Esc => {
                 app.is_filtering = false;
+            }
+            KeyCode::Enter => {
+                app.is_filtering = false;
+                if let Some(tbl) = app.filtered_tables().get(app.selected_table_idx) {
+                    return AppAction::FetchTableData(tbl.schema.clone(), tbl.name.clone());
+                }
             }
             KeyCode::Backspace => {
                 app.filter_text.pop();
@@ -32,6 +64,7 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
         }
         if changed {
             app.selected_table_idx = 0;
+            app.update_filtered_tables();
         }
         return AppAction::None;
     }
@@ -123,8 +156,23 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
     }
 
     // Global Keybindings
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-        return AppAction::Quit;
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match key.code {
+            KeyCode::Char('c') => return AppAction::Quit,
+            KeyCode::Char('d') => {
+                if app.active_tab == ActiveTab::Relationships && app.focused_panel == FocusedPanel::DataPreview {
+                    app.diagram_scroll_offset_y += 10;
+                    return AppAction::None;
+                }
+            }
+            KeyCode::Char('u') => {
+                if app.active_tab == ActiveTab::Relationships && app.focused_panel == FocusedPanel::DataPreview {
+                    app.diagram_scroll_offset_y -= 10;
+                    return AppAction::None;
+                }
+            }
+            _ => {}
+        }
     }
 
     match key.code {
@@ -142,18 +190,24 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
         KeyCode::Char('3') => app.active_tab = ActiveTab::Users,
         KeyCode::Char('4') => app.active_tab = ActiveTab::QueryRunner,
         KeyCode::Char('5') => app.active_tab = ActiveTab::Connections,
+        KeyCode::Char('6') => app.active_tab = ActiveTab::Relationships,
         KeyCode::Char('?') => app.active_tab = ActiveTab::Help,
         
         KeyCode::Char('s') => {
             app.show_system_tables = !app.show_system_tables;
             app.selected_table_idx = 0;
+            app.update_filtered_tables();
             if let Some(tbl) = app.filtered_tables().get(0) {
                 return AppAction::FetchTableData(tbl.schema.clone(), tbl.name.clone());
             }
         }
         KeyCode::Char('/') => {
-            if app.active_tab == ActiveTab::Browser {
-                app.is_filtering = !app.is_filtering;
+            if app.active_tab == ActiveTab::Browser || app.active_tab == ActiveTab::Relationships {
+                if app.is_fullscreen_data {
+                    app.is_filtering_data = !app.is_filtering_data;
+                } else {
+                    app.is_filtering = !app.is_filtering;
+                }
             }
         }
         KeyCode::Char('a') => {
@@ -166,6 +220,8 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
                 app.conn_input_user = "postgres".to_string();
                 app.conn_input_pass.clear();
                 app.conn_input_dbname = "postgres".to_string();
+            } else if app.active_tab == ActiveTab::Relationships {
+                app.show_all_relationships = !app.show_all_relationships;
             }
         }
         KeyCode::Delete | KeyCode::Char('d') => {
@@ -181,10 +237,18 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
             }
         }
         KeyCode::Char('c') => return AppAction::Connect,
-        KeyCode::Char('r') => return AppAction::RefreshTables,
+        KeyCode::Char('r') => {
+            if app.active_tab == ActiveTab::Relationships {
+                app.layout_seed += 1;
+                app.diagram_scroll_offset_y = 0;
+                app.diagram_scroll_offset_x = 0;
+            } else {
+                return AppAction::RefreshTables;
+            }
+        }
         
         KeyCode::Tab => {
-            if app.active_tab == ActiveTab::Browser {
+            if app.active_tab == ActiveTab::Browser || app.active_tab == ActiveTab::Relationships {
                 app.focused_panel = match app.focused_panel {
                     FocusedPanel::Tables => FocusedPanel::DataPreview,
                     _ => FocusedPanel::Tables,
@@ -200,13 +264,25 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
 
         KeyCode::Char('+') | KeyCode::Char('=') => {
             if app.active_tab == ActiveTab::Browser {
-                app.cell_width = (app.cell_width + 4).min(80);
+                app.cell_width = (app.cell_width + 4).min(500);
             }
         }
 
         KeyCode::Char('-') | KeyCode::Char('_') => {
             if app.active_tab == ActiveTab::Browser {
                 app.cell_width = app.cell_width.saturating_sub(4).max(8);
+            }
+        }
+
+        KeyCode::Char('i') => {
+            if app.active_tab == ActiveTab::Relationships {
+                app.relationship_zoom = (app.relationship_zoom + 1).min(4);
+            }
+        }
+
+        KeyCode::Char('o') => {
+            if app.active_tab == ActiveTab::Relationships {
+                app.relationship_zoom = app.relationship_zoom.saturating_sub(1).max(1);
             }
         }
 
@@ -231,6 +307,10 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
                 } else if app.data_col_offset > 0 {
                     app.data_col_offset -= 1;
                 }
+            } else if app.active_tab == ActiveTab::Relationships {
+                if app.focused_panel == FocusedPanel::DataPreview {
+                    navigate_relationships_2d(app, 'h');
+                }
             }
         }
 
@@ -247,6 +327,10 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
                     }
                 } else {
                     app.data_col_offset = app.data_col_offset.saturating_add(1);
+                }
+            } else if app.active_tab == ActiveTab::Relationships {
+                if app.focused_panel == FocusedPanel::DataPreview {
+                    navigate_relationships_2d(app, 'l');
                 }
             }
         }
@@ -291,6 +375,19 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
                     }
                 }
             }
+            ActiveTab::Relationships => {
+                if app.focused_panel == FocusedPanel::DataPreview {
+                    navigate_relationships_2d(app, 'j');
+                } else {
+                    let count = app.filtered_tables().len();
+                    if count > 0 {
+                        app.selected_table_idx = (app.selected_table_idx + 1).min(count - 1);
+                        app.selected_data_row = 0;
+                        app.diagram_scroll_offset_y = 0;
+                        app.diagram_scroll_offset_x = 0;
+                    }
+                }
+            }
             ActiveTab::Databases => {
                 if let Some(ref res) = app.databases_result {
                     if !res.rows.is_empty() {
@@ -326,6 +423,16 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
                     app.data_scroll_offset = 0;
                     app.selected_data_row = 0;
                     app.selected_data_col = 0;
+                }
+            }
+            ActiveTab::Relationships => {
+                if app.focused_panel == FocusedPanel::DataPreview {
+                    navigate_relationships_2d(app, 'k');
+                } else if app.selected_table_idx > 0 {
+                    app.selected_table_idx -= 1;
+                    app.selected_data_row = 0;
+                    app.diagram_scroll_offset_y = 0;
+                    app.diagram_scroll_offset_x = 0;
                 }
             }
             ActiveTab::Databases => {
@@ -464,6 +571,19 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
                     return AppAction::FetchTableData(tbl.schema.clone(), tbl.name.clone());
                 }
             }
+            ActiveTab::Relationships => {
+                if let Some(tbl) = app.filtered_tables().get(app.selected_table_idx) {
+                    let schema = tbl.schema.clone();
+                    let name = tbl.name.clone();
+                    app.active_tab = ActiveTab::Browser;
+                    app.focused_panel = FocusedPanel::DataPreview;
+                    app.data_page = 0;
+                    app.data_scroll_offset = 0;
+                    app.selected_data_row = 0;
+                    app.selected_data_col = 0;
+                    return AppAction::FetchTableData(schema, name);
+                }
+            }
             ActiveTab::Databases => {
                 if let Some(ref res) = app.databases_result {
                     if let Some(row) = res.rows.get(app.selected_db_idx) {
@@ -483,4 +603,62 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
     }
 
     AppAction::None
+}
+
+fn navigate_relationships_2d(app: &mut AppState, direction: char) {
+    // Reset manual scroll offsets when hopping
+    app.diagram_scroll_offset_y = 0;
+    app.diagram_scroll_offset_x = 0;
+
+    let tables = app.filtered_tables();
+    let current_tbl = match tables.get(app.selected_table_idx) {
+        Some(t) => t,
+        None => return,
+    };
+
+    // Calculate layout coordinates
+    let (layout, _) = crate::app::get_global_table_layout(&app.tables, &app.all_foreign_keys, app.relationship_zoom, app.layout_seed);
+
+    // Find current table coordinates
+    let current_pos = layout.iter().find(|(key, _, _, _)| key.0 == current_tbl.schema && key.1 == current_tbl.name);
+    let (curr_x, curr_y) = match current_pos {
+        Some(&(_, x, y, _)) => (x as isize, y as isize),
+        None => return,
+    };
+
+    // Find the closest table in the given direction
+    let mut closest_tbl_idx = None;
+    let mut min_distance = isize::MAX;
+
+    for (idx, tbl) in tables.iter().enumerate() {
+        if idx == app.selected_table_idx {
+            continue;
+        }
+
+        let pos = layout.iter().find(|(key, _, _, _)| key.0 == tbl.schema && key.1 == tbl.name);
+        if let Some(&(_, x, y, _)) = pos {
+            let tx = x as isize;
+            let ty = y as isize;
+
+            let is_in_direction = match direction {
+                'k' => ty < curr_y,  // Up
+                'j' => ty > curr_y,  // Down
+                'h' => tx < curr_x,  // Left
+                'l' => tx > curr_x,  // Right
+                _ => false,
+            };
+
+            if is_in_direction {
+                let dist = (tx - curr_x).pow(2) + (ty - curr_y).pow(2);
+                if dist < min_distance {
+                    min_distance = dist;
+                    closest_tbl_idx = Some(idx);
+                }
+            }
+        }
+    }
+
+    if let Some(idx) = closest_tbl_idx {
+        app.selected_table_idx = idx;
+    }
 }

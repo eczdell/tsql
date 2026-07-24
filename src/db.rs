@@ -1,7 +1,9 @@
 use tokio_postgres::{Client, NoTls};
 use crate::config::ConnectionConfig;
 
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableInfo {
     pub name: String,
     pub schema: String,
@@ -21,6 +23,7 @@ pub struct ForeignKeyInfo {
     pub column_name: String,
     pub foreign_table_schema: String,
     pub foreign_table_name: String,
+    #[allow(dead_code)]
     pub foreign_column_name: String,
 }
 
@@ -54,14 +57,16 @@ pub async fn connect(cfg: &ConnectionConfig) -> Result<Client, Box<dyn std::erro
 pub async fn fetch_tables(client: &Client) -> Result<Vec<TableInfo>, Box<dyn std::error::Error + Send + Sync>> {
     let query = "
         SELECT 
-            table_name::text, 
-            table_schema::text, 
-            0::bigint as row_count
-        FROM information_schema.tables
+            c.relname::text AS table_name,
+            n.nspname::text AS table_schema,
+            c.reltuples::bigint AS row_count
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind = 'r'
         ORDER BY 
-            CASE WHEN table_schema NOT IN ('pg_catalog', 'information_schema') THEN 0 ELSE 1 END,
-            table_schema, 
-            table_name;
+            CASE WHEN n.nspname NOT IN ('pg_catalog', 'information_schema') THEN 0 ELSE 1 END,
+            n.nspname, 
+            c.relname;
     ";
     let rows = client.query(query, &[]).await?;
     let mut tables = Vec::new();
@@ -78,23 +83,20 @@ pub async fn fetch_tables(client: &Client) -> Result<Vec<TableInfo>, Box<dyn std
 pub async fn fetch_columns(client: &Client, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, Box<dyn std::error::Error + Send + Sync>> {
     let query = "
         SELECT 
-            c.column_name::text, 
-            c.data_type::text, 
-            c.is_nullable::text,
-            CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END as is_primary_key
-        FROM information_schema.columns c
+            a.attname::text AS column_name,
+            pg_catalog.format_type(a.atttypid, a.atttypmod)::text AS data_type,
+            CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END::text AS is_nullable,
+            CASE WHEN pk.attnum IS NOT NULL THEN true ELSE false END AS is_primary_key
+        FROM pg_catalog.pg_attribute a
+        JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
         LEFT JOIN (
-            SELECT kcu.column_name
-            FROM information_schema.table_constraints tc
-            JOIN information_schema.key_column_usage kcu
-                ON tc.constraint_name = kcu.constraint_name
-                AND tc.table_schema = kcu.table_schema
-            WHERE tc.constraint_type = 'PRIMARY KEY'
-                AND tc.table_schema = $1
-                AND tc.table_name = $2
-        ) pk ON c.column_name = pk.column_name
-        WHERE c.table_schema = $1 AND c.table_name = $2
-        ORDER BY c.ordinal_position;
+            SELECT unnest(conkey) as attnum, conrelid
+            FROM pg_catalog.pg_constraint
+            WHERE contype = 'p'
+        ) pk ON pk.conrelid = c.oid AND pk.attnum = a.attnum
+        WHERE n.nspname = $1 AND c.relname = $2 AND a.attnum > 0 AND NOT a.attisdropped
+        ORDER BY a.attnum;
     ";
     let rows = client.query(query, &[&schema, &table]).await?;
     let mut cols = Vec::new();
@@ -112,20 +114,20 @@ pub async fn fetch_columns(client: &Client, schema: &str, table: &str) -> Result
 pub async fn fetch_foreign_keys(client: &Client, schema: &str, table: &str) -> Result<Vec<ForeignKeyInfo>, Box<dyn std::error::Error + Send + Sync>> {
     let query = "
         SELECT
-            kcu.column_name::text,
-            ccu.table_schema::text AS foreign_table_schema,
-            ccu.table_name::text AS foreign_table_name,
-            ccu.column_name::text AS foreign_column_name
-        FROM information_schema.table_constraints AS tc
-        JOIN information_schema.key_column_usage AS kcu
-            ON tc.constraint_name = kcu.constraint_name
-            AND tc.table_schema = kcu.table_schema
-        JOIN information_schema.constraint_column_usage AS ccu
-            ON ccu.constraint_name = tc.constraint_name
-            AND ccu.table_schema = tc.table_schema
-        WHERE tc.constraint_type = 'FOREIGN KEY'
-            AND tc.table_schema = $1
-            AND tc.table_name = $2;
+            a.attname::text AS column_name,
+            confns.nspname::text AS foreign_table_schema,
+            confcl.relname::text AS foreign_table_name,
+            fa.attname::text AS foreign_column_name
+        FROM pg_catalog.pg_constraint con
+        JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(con.conkey)
+        JOIN pg_catalog.pg_class confcl ON confcl.oid = con.confrelid
+        JOIN pg_catalog.pg_namespace confns ON confns.oid = confcl.relnamespace
+        JOIN pg_catalog.pg_attribute fa ON fa.attrelid = confcl.oid AND fa.attnum = ANY(con.confkey)
+        WHERE con.contype = 'f'
+          AND n.nspname = $1
+          AND c.relname = $2;
     ";
     let rows = client.query(query, &[&schema, &table]).await?;
     let mut fks = Vec::new();
@@ -135,6 +137,50 @@ pub async fn fetch_foreign_keys(client: &Client, schema: &str, table: &str) -> R
             foreign_table_schema: r.get(1),
             foreign_table_name: r.get(2),
             foreign_column_name: r.get(3),
+        });
+    }
+    Ok(fks)
+}
+
+#[derive(Debug, Clone)]
+pub struct AllForeignKeyInfo {
+    pub table_schema: String,
+    pub table_name: String,
+    pub column_name: String,
+    pub foreign_table_schema: String,
+    pub foreign_table_name: String,
+    pub foreign_column_name: String,
+}
+
+pub async fn fetch_all_foreign_keys(client: &Client) -> Result<Vec<AllForeignKeyInfo>, Box<dyn std::error::Error + Send + Sync>> {
+    let query = "
+        SELECT
+            n.nspname::text AS table_schema,
+            c.relname::text AS table_name,
+            a.attname::text AS column_name,
+            confns.nspname::text AS foreign_table_schema,
+            confcl.relname::text AS foreign_table_name,
+            fa.attname::text AS foreign_column_name
+        FROM pg_catalog.pg_constraint con
+        JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(con.conkey)
+        JOIN pg_catalog.pg_class confcl ON confcl.oid = con.confrelid
+        JOIN pg_catalog.pg_namespace confns ON confns.oid = confcl.relnamespace
+        JOIN pg_catalog.pg_attribute fa ON fa.attrelid = confcl.oid AND fa.attnum = ANY(con.confkey)
+        WHERE con.contype = 'f'
+        ORDER BY n.nspname, c.relname, a.attname;
+    ";
+    let rows = client.query(query, &[]).await?;
+    let mut fks = Vec::new();
+    for r in rows {
+        fks.push(AllForeignKeyInfo {
+            table_schema: r.get(0),
+            table_name: r.get(1),
+            column_name: r.get(2),
+            foreign_table_schema: r.get(3),
+            foreign_table_name: r.get(4),
+            foreign_column_name: r.get(5),
         });
     }
     Ok(fks)
@@ -197,3 +243,42 @@ pub async fn execute_sql(client: &Client, sql: &str) -> Result<QueryResult, Box<
         execution_time_ms: duration,
     })
 }
+
+#[derive(Serialize, Deserialize)]
+struct TableCache {
+    tables: Vec<TableInfo>,
+}
+
+pub fn get_table_cache_path(conn_name: &str) -> std::path::PathBuf {
+    if let Some(mut path) = dirs::cache_dir() {
+        path.push("tsql");
+        path.push(format!("{}_tables.toml", conn_name));
+        path
+    } else {
+        std::path::PathBuf::from(format!("{}_tables.toml", conn_name))
+    }
+}
+
+pub fn load_table_cache(conn_name: &str) -> Option<Vec<TableInfo>> {
+    let path = get_table_cache_path(conn_name);
+    if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(cache) = toml::from_str::<TableCache>(&content) {
+                return Some(cache.tables);
+            }
+        }
+    }
+    None
+}
+
+pub fn save_table_cache(conn_name: &str, tables: &[TableInfo]) -> Result<(), Box<dyn std::error::Error>> {
+    let path = get_table_cache_path(conn_name);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let cache = TableCache { tables: tables.to_vec() };
+    let content = toml::to_string_pretty(&cache)?;
+    std::fs::write(path, content)?;
+    Ok(())
+}
+

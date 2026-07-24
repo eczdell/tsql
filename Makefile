@@ -10,7 +10,7 @@ RELEASE   := target/release/$(BINARY)
 PREFIX    ?= /usr/local
 BINDIR    ?= $(PREFIX)/bin
 
-.PHONY: all build install install-local install-bin uninstall clean run help
+.PHONY: all build install install-local install-cargo install-global install-bin uninstall clean run help
 
 all: build
 
@@ -39,12 +39,18 @@ install: build
 	@echo ""
 
 # ─── Install to ~/.local/bin (convenience alias) ──────────────────────────
-
+ 
 install-local: PREFIX := $(HOME)/.local
 install-local: install
 	@echo "  ✓ (user-local install to $(HOME)/.local/bin)"
 
-# ─── Install binary only (no build) — useful with sudo ───────────────────
+# ─── Install via Cargo (Cross-Platform: Linux, macOS, Windows) ────────────
+
+install-cargo:
+	$(CARGO) install --path .
+	@echo ""
+	@echo "  ✓ tsql installed via Cargo to ~/.cargo/bin/tsql"
+	@echo ""
 
 install-bin: $(RELEASE)
 	install -d "$(DESTDIR)$(BINDIR)"
@@ -76,6 +82,7 @@ help:
 	@echo "  make run            Build (debug) and run the TUI"
 	@echo "  make install        Build and install globally (default: PREFIX=/usr/local)"
 	@echo "  make install-local  Build and install to ~/.local/bin"
+	@echo "  make install-cargo  Install globally via cargo (~/.cargo/bin)"
 	@echo "  make install-bin    Copy pre-built binary (no build step)"
 	@echo ""
 	@echo "Options:"
