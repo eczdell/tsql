@@ -15,6 +15,7 @@ pub fn render_ui(f: &mut Frame, app: &AppState) {
             Constraint::Length(3), // Header & Tabs
             Constraint::Min(0),    // Content Area
             Constraint::Length(1), // Footer / Status bar
+            Constraint::Length(1), // Error detail line
         ])
         .split(f.area());
 
@@ -30,7 +31,7 @@ pub fn render_ui(f: &mut Frame, app: &AppState) {
         ActiveTab::Help => render_help(f, app, main_chunks[1]),
     }
 
-    render_status_bar(f, app, main_chunks[2]);
+    render_status_bar(f, app, main_chunks[2], main_chunks[3]);
 }
 
 fn render_header(f: &mut Frame, app: &AppState, area: Rect) {
@@ -911,13 +912,25 @@ fn render_help(f: &mut Frame, _app: &AppState, area: Rect) {
     f.render_widget(p, area);
 }
 
-fn render_status_bar(f: &mut Frame, app: &AppState, area: Rect) {
+fn render_status_bar(f: &mut Frame, app: &AppState, area: Rect, error_area: Rect) {
     let status_line = Line::from(vec![
         Span::styled(" STATUS: ", Style::default().fg(Color::Black).bg(Color::Cyan)),
         Span::styled(format!(" {} ", app.status_message), Style::default().fg(Color::White)),
         Span::styled(" | Press '?' for help ", Style::default().fg(Color::DarkGray)),
     ]);
     f.render_widget(Paragraph::new(status_line), area);
+
+    // Show full error message in the error detail line when connection fails
+    if app.status_message.starts_with("Connection failed:") {
+        let error_text = format!(" {}", app.status_message);
+        let error_p = Paragraph::new(error_text)
+            .style(Style::default().fg(Color::Red).bg(Color::Black))
+            .block(Block::default().borders(Borders::NONE));
+        f.render_widget(error_p, error_area);
+    } else {
+        let empty = Paragraph::new("").style(Style::default().fg(Color::Black).bg(Color::Black));
+        f.render_widget(empty, error_area);
+    }
 }
 
 struct Canvas {
