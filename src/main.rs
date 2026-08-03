@@ -155,6 +155,8 @@ async fn refresh_tables(app: &mut AppState) {
 }
 
 async fn fetch_table_schema_and_data(app: &mut AppState, schema: &str, table_name: &str) {
+    app.field_search_text.clear();
+    app.is_field_searching = false;
     let cache_key = format!("{}.{}", schema, table_name);
 
     // Fast Cache Check

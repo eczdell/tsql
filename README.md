@@ -33,7 +33,7 @@
 | --- | --- |
 | `1` - `6` | Switch Tabs (`Tables`, `Databases`, `Users`, `Query Runner`, `Connections`, `Relationships`) |
 | `Tab` | Toggle Focus between Table List / Sidebar and Main Content Area |
-| `/` | Open SIMD Fuzzy Table Filter |
+| `/` | Open SIMD Fuzzy Table Filter (Tables panel) or search field names (Data View) or filter data rows (Fullscreen Data View) |
 | `s` | Toggle system tables (`information_schema`, `pg_catalog`) |
 | `r` | Refresh database tables & clear caches |
 | `q` or `Esc` | Quit / Close modal |
@@ -50,6 +50,7 @@
 | `+` or `=` | **Zoom In Grid** (Widen column widths) |
 | `-` or `_` | **Zoom Out Grid** (Narrow column widths) |
 | `n` / `p` | Next Page / Previous Page (50 rows/page) |
+| `/` | **Search Field Names** (filter columns in Data View when focused on data grid) |
 
 ### Interactive ER Diagram Visualizer (Tab 6)
 | Key | Action |
@@ -62,6 +63,7 @@
 | `a` | **Toggle All Lines** (Switch between Focused Table View and All Relationships View) |
 | `r` | **Reposition Layout** (Shuffle column assignment to untangle complex connections) |
 | `Enter` | **View Table Data Grid** for focused entity |
+| `/` | **Search Field Names** (filter tables & highlight matching columns in ER Diagram) |
 
 ### Connection Manager (Tab 5)
 | Key | Action |

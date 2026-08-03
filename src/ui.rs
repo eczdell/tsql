@@ -156,6 +156,10 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
     let col_items: Vec<ListItem> = app
         .columns
         .iter()
+        .filter(|col| {
+            app.field_search_text.is_empty()
+                || col.name.to_lowercase().contains(&app.field_search_text.to_lowercase())
+        })
         .map(|col| {
             let is_fk = app.foreign_keys.iter().any(|fk| fk.column_name == col.name)
                 || col.name == "entity_id"
@@ -171,9 +175,16 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
                 Span::styled("        ", Style::default())
             };
 
+            let is_match = !app.field_search_text.is_empty();
+            let name_style = if is_match {
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Green)
+            };
+
             ListItem::new(Line::from(vec![
                 badge_span,
-                Span::styled(format!("{:<20}", col.name), Style::default().fg(Color::Green)),
+                Span::styled(format!("{:<20}", col.name), name_style),
                 Span::styled(format!("{:<16}", col.data_type), Style::default().fg(Color::Yellow)),
                 Span::styled(
                     if col.is_nullable == "YES" { "NULL" } else { "NOT NULL" },
@@ -188,7 +199,13 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
         .map(|t| t.name.as_str())
         .unwrap_or("None");
 
-
+    let field_search_display = if app.is_field_searching {
+        format!(" [Field Search: {}█]", app.field_search_text)
+    } else if !app.field_search_text.is_empty() {
+        format!(" [Field Search: {}]", app.field_search_text)
+    } else {
+        String::new()
+    };
 
     if app.is_loading {
         let loading_widget = Paragraph::new("\n  ⠋ Loading columns...")
@@ -196,7 +213,7 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(format!(" Columns: {} ", selected_table_name))
+                    .title(format!(" Columns: {} {} ", selected_table_name, field_search_display))
                     .border_style(Style::default().fg(Color::DarkGray)),
             );
         f.render_widget(loading_widget, right_chunks[0]);
@@ -204,7 +221,7 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
         let col_list = List::new(col_items).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(format!(" Columns: {} ", selected_table_name))
+                .title(format!(" Columns: {} {} ", selected_table_name, field_search_display))
                 .border_style(Style::default().fg(Color::DarkGray)),
         );
         f.render_widget(col_list, right_chunks[0]);
@@ -229,6 +246,7 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
             let is_fk = app.foreign_keys.iter().any(|fk| fk.column_name == *h)
                 || *h == "entity_id"
                 || h.ends_with("_id");
+            let is_match = !app.field_search_text.is_empty() && h.to_lowercase().contains(&app.field_search_text.to_lowercase());
 
             let col_name_fmt = if is_pk && is_fk {
                 format!(" 🔑🔑 PK/FK: {} ", h)
@@ -239,9 +257,11 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
             } else {
                 format!(" {} ", h)
             };
-            
+
             let style = if is_col_selected {
                 Style::default().fg(Color::Yellow).bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+            } else if is_match {
+                Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)
             } else if is_pk && is_fk {
                 Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)
             } else if is_pk {
@@ -274,7 +294,8 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
             let mut cells: Vec<ratatui::widgets::Cell> = visible_cells.iter().enumerate().map(|(c_idx, c)| {
                 let actual_col_idx = app.data_col_offset + c_idx;
                 let is_cell_selected = data_focused && r_idx == app.selected_data_row && actual_col_idx == app.selected_data_col;
-                
+                let is_match = !app.field_search_text.is_empty() && res.columns.get(actual_col_idx).map_or(false, |col| col.to_lowercase().contains(&app.field_search_text.to_lowercase()));
+
                 let col_w = col_widths.get(c_idx).copied().unwrap_or(22);
                 let w = col_w.saturating_sub(2);
                 if is_cell_selected {
@@ -284,6 +305,14 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
                         format!("▶[ {:<width$} ]◀", c, width = w.saturating_sub(6))
                     };
                     let style = Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD);
+                    ratatui::widgets::Cell::from(Span::styled(text, style))
+                } else if is_match {
+                    let style = Style::default().fg(Color::Black).bg(Color::Green);
+                    let text = if c.len() > w {
+                        format!("{}..", &c[..w.saturating_sub(2)])
+                    } else {
+                        format!(" {:<width$} ", c, width = w.saturating_sub(2))
+                    };
                     ratatui::widgets::Cell::from(Span::styled(text, style))
                 } else {
                     let style = if c == "NULL" {
@@ -339,8 +368,19 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
             format!(" [{}] ", items.join(" ➔ "))
         };
 
+        let field_search_display = if app.is_field_searching {
+            format!(" [Field Search: {}█]", app.field_search_text)
+        } else if !app.field_search_text.is_empty() {
+            format!(" [Field Search: {}]", app.field_search_text)
+        } else {
+            "".to_string()
+        };
+
         let title_text = format!(
-            " Data View{} — Page {} (R{} C{}) [Zoom: {}px]{} [Enter=Jump, b/f=Nav, +/-=Zoom, m=Fullscreen] ",
+            " Fullscreen Data View: {}{}{}{} — Page {} (R{} C{}) [Zoom: {}px]{} [Enter=Jump, b=Back, f=Forward, m/Esc=Exit, /=Field Search] ",
+            selected_table_name,
+            filter_display,
+            field_search_display,
             breadcrumb_str,
             app.data_page + 1,
             app.selected_data_row + 1,
@@ -393,6 +433,7 @@ fn render_fullscreen_data(f: &mut Frame, app: &AppState, area: Rect) {
             let is_fk = app.foreign_keys.iter().any(|fk| fk.column_name == *h)
                 || *h == "entity_id"
                 || h.ends_with("_id");
+            let is_match = !app.field_search_text.is_empty() && h.to_lowercase().contains(&app.field_search_text.to_lowercase());
 
             let col_name_fmt = if is_pk && is_fk {
                 format!(" 🔑🔑 PK/FK: {} ", h)
@@ -403,9 +444,11 @@ fn render_fullscreen_data(f: &mut Frame, app: &AppState, area: Rect) {
             } else {
                 format!(" {} ", h)
             };
-            
+
             let style = if is_col_selected {
                 Style::default().fg(Color::Yellow).bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+            } else if is_match {
+                Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)
             } else if is_pk && is_fk {
                 Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)
             } else if is_pk {
@@ -438,7 +481,8 @@ fn render_fullscreen_data(f: &mut Frame, app: &AppState, area: Rect) {
             let mut cells: Vec<ratatui::widgets::Cell> = visible_cells.iter().enumerate().map(|(c_idx, c)| {
                 let actual_col_idx = app.data_col_offset + c_idx;
                 let is_cell_selected = r_idx == app.selected_data_row && actual_col_idx == app.selected_data_col;
-                
+                let is_match = !app.field_search_text.is_empty() && res.columns.get(actual_col_idx).map_or(false, |col| col.to_lowercase().contains(&app.field_search_text.to_lowercase()));
+
                 let col_w = col_widths.get(c_idx).copied().unwrap_or(22);
                 let w = col_w.saturating_sub(2);
                 if is_cell_selected {
@@ -448,6 +492,14 @@ fn render_fullscreen_data(f: &mut Frame, app: &AppState, area: Rect) {
                         format!("▶[ {:<width$} ]◀", c, width = w.saturating_sub(6))
                     };
                     let style = Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD);
+                    ratatui::widgets::Cell::from(Span::styled(text, style))
+                } else if is_match {
+                    let style = Style::default().fg(Color::Black).bg(Color::Green);
+                    let text = if c.len() > w {
+                        format!("{}..", &c[..w.saturating_sub(2)])
+                    } else {
+                        format!(" {:<width$} ", c, width = w.saturating_sub(2))
+                    };
                     ratatui::widgets::Cell::from(Span::styled(text, style))
                 } else {
                     let style = if c == "NULL" {
@@ -511,10 +563,19 @@ fn render_fullscreen_data(f: &mut Frame, app: &AppState, area: Rect) {
             "".to_string()
         };
 
+        let field_search_display = if app.is_field_searching {
+            format!(" [Field Search: {}█]", app.field_search_text)
+        } else if !app.field_search_text.is_empty() {
+            format!(" [Field Search: {}]", app.field_search_text)
+        } else {
+            "".to_string()
+        };
+
         let title_text = format!(
-            " Fullscreen Data View: {}{}{} — Page {} (R{} C{}) [Zoom: {}px]{} [Enter=Jump, b=Back, f=Forward, m/Esc=Exit] ",
+            " Fullscreen Data View: {}{}{}{} — Page {} (R{} C{}) [Zoom: {}px]{} [Enter=Jump, b=Back, f=Forward, m/Esc=Exit, /=Field Search] ",
             selected_table_name,
             filter_display,
+            field_search_display,
             breadcrumb_str,
             app.data_page + 1,
             app.selected_data_row + 1,
@@ -828,7 +889,10 @@ fn render_help(f: &mut Frame, _app: &AppState, area: Rect) {
         Line::from(vec![Span::styled("Tab           ", Style::default().fg(Color::Yellow)), Span::raw("Toggle focus between Tables panel and Data View panel")]),
         Line::from(vec![Span::styled("j, k, Up, Down", Style::default().fg(Color::Yellow)), Span::raw("Navigate table list / scroll table rows in Data View")]),
         Line::from(vec![Span::styled("n / p         ", Style::default().fg(Color::Yellow)), Span::raw("Next page / Previous page in Data View (50 rows/page)")]),
-        Line::from(vec![Span::styled("/             ", Style::default().fg(Color::Yellow)), Span::raw("Fuzzy search/filter table list")]),
+        Line::from(vec![Span::styled("/             ", Style::default().fg(Color::Yellow)), Span::raw("Fuzzy search/filter table list (Tables panel)")]),
+        Line::from(vec![Span::styled("                ", Style::default().fg(Color::Yellow)), Span::raw("or search field names (Data View when focused)")]),
+        Line::from(vec![Span::styled("                ", Style::default().fg(Color::Yellow)), Span::raw("or filter data rows (Fullscreen Data View)")]),
+        Line::from(vec![Span::styled("                ", Style::default().fg(Color::Yellow)), Span::raw("or filter tables/columns (Relationships ER Diagram)")]),
         Line::from(vec![Span::styled("Enter         ", Style::default().fg(Color::Yellow)), Span::raw("Jump to Relational Foreign Key table")]),
         Line::from(vec![Span::styled("b / f         ", Style::default().fg(Color::Yellow)), Span::raw("Step Back / Step Forward in Breadcrumb history")]),
         Line::from(vec![Span::styled("+ / -         ", Style::default().fg(Color::Yellow)), Span::raw("Zoom In / Zoom Out (Widen or Narrow table grid columns)")]),
@@ -960,13 +1024,35 @@ fn render_relationships(f: &mut Frame, app: &AppState, area: Rect) {
         (Some(split_chunks.clone()), split_chunks[1])
     };
 
+    // Field search: determine which tables have matching columns
+    let field_search_match: std::collections::HashSet<(String, String)> = if !app.field_search_text.is_empty() {
+        let query = app.field_search_text.to_lowercase();
+        let mut matches = std::collections::HashSet::new();
+        for tbl in &app.tables {
+            let has_match = app.all_foreign_keys.iter().any(|fk| {
+                (fk.table_schema == tbl.schema && fk.table_name == tbl.name && fk.column_name.to_lowercase().contains(&query))
+                    || (fk.foreign_table_schema == tbl.schema && fk.foreign_table_name == tbl.name && fk.foreign_column_name.to_lowercase().contains(&query))
+            });
+            if has_match {
+                matches.insert((tbl.schema.clone(), tbl.name.clone()));
+            }
+        }
+        matches
+    } else {
+        std::collections::HashSet::new()
+    };
+
     if let Some(ref split_chunks) = chunks {
         let tables = app.filtered_tables();
         let items: Vec<ListItem> = tables
             .iter()
             .enumerate()
-            .map(|(idx, tbl)| {
-                let is_sel = idx == app.selected_table_idx;
+            .filter(|(_, tbl)| {
+                app.field_search_text.is_empty()
+                    || field_search_match.contains(&(tbl.schema.clone(), tbl.name.clone()))
+            })
+            .map(|(orig_idx, tbl)| {
+                let is_sel = orig_idx == app.selected_table_idx;
                 let prefix = if is_sel { "❯ " } else { "  " };
                 let style = if is_sel {
                     Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
@@ -980,7 +1066,11 @@ fn render_relationships(f: &mut Frame, app: &AppState, area: Rect) {
             })
             .collect();
 
-        let filter_display = if app.is_filtering {
+        let filter_display = if app.is_field_searching {
+            format!(" [Field Search: {}█]", app.field_search_text)
+        } else if !app.field_search_text.is_empty() {
+            format!(" [Field Search: {}]", app.field_search_text)
+        } else if app.is_filtering {
             format!(" [{}█]", app.filter_text)
         } else if !app.filter_text.is_empty() {
             format!(" [{}]", app.filter_text)
@@ -992,7 +1082,7 @@ fn render_relationships(f: &mut Frame, app: &AppState, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(format!(" Tables ({}){}", tables.len(), filter_display))
-                .border_style(if app.is_filtering || app.focused_panel == FocusedPanel::Tables {
+                .border_style(if app.is_field_searching || app.is_filtering || app.focused_panel == FocusedPanel::Tables {
                     Style::default().fg(Color::Yellow)
                 } else {
                     Style::default().fg(Color::DarkGray)
@@ -1050,19 +1140,29 @@ fn render_relationships(f: &mut Frame, app: &AppState, area: Rect) {
     // Calculate layout coordinates
     let (layout, col_coords) = crate::app::get_global_table_layout(&app.tables, &app.all_foreign_keys, zoom, app.layout_seed);
 
+    // Field search: filter layout to only show matching tables
+    let layout_tables: Vec<_> = if app.field_search_text.is_empty() {
+        layout.iter().collect()
+    } else {
+        layout.iter().filter(|(key, _, _, _)| {
+            field_search_match.contains(&(key.0.clone(), key.1.clone()))
+        }).collect()
+    };
+
     // Compute bounding canvas size
     let mut canvas_width = viewport_width;
     let mut canvas_height = viewport_height;
 
-    for (_, x, y, h) in &layout {
+    for (_, x, y, h) in &layout_tables {
         canvas_width = canvas_width.max(x + box_width + 4);
         canvas_height = canvas_height.max(y + h + 15); // Extra padding for bypass lines
     }
 
     let mut canvas = Canvas::new(canvas_width, canvas_height);
 
-    // 1. Draw all table boxes
-    for ((schema, name), x, y, h) in &layout {
+    // 1. Draw all table boxes (filtered by field search)
+    for ((schema, name), x, y, h) in &layout_tables {
+
         let is_selected_table = selected_table.as_ref()
             .map(|st| st.schema == *schema && st.name == *name)
             .unwrap_or(false);
@@ -1076,7 +1176,7 @@ fn render_relationships(f: &mut Frame, app: &AppState, area: Rect) {
         let title = format!("{}.{}", schema, name);
         canvas.draw_box(*x, *y, box_width, *h, &title, border_style, title_style);
 
-        // Always draw key column fields
+        // Draw key column fields with field search highlighting
         let mut key_cols = std::collections::BTreeSet::new();
         for fk in &app.all_foreign_keys {
             if fk.table_schema == *schema && fk.table_name == *name {
@@ -1111,7 +1211,10 @@ fn render_relationships(f: &mut Frame, app: &AppState, area: Rect) {
                 Style::default().fg(Color::DarkGray)
             };
 
-            let name_style = if is_selected_table {
+            let is_match = !app.field_search_text.is_empty() && col.to_lowercase().contains(&app.field_search_text.to_lowercase());
+            let name_style = if is_match {
+                Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)
+            } else if is_selected_table {
                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::White)
@@ -1141,14 +1244,20 @@ fn render_relationships(f: &mut Frame, app: &AppState, area: Rect) {
     // Find vertical boundaries of all layout boxes
     let mut global_min_y = 10;
     let mut global_max_y = 10;
-    if !layout.is_empty() {
-        global_min_y = layout.iter().map(|(_, _, y, _)| *y).min().unwrap_or(10);
-        global_max_y = layout.iter().map(|(_, _, y, h)| y + h).max().unwrap_or(10);
+    if !layout_tables.is_empty() {
+        global_min_y = layout_tables.iter().map(|(_, _, y, _)| *y).min().unwrap_or(10);
+        global_max_y = layout_tables.iter().map(|(_, _, y, h)| y + h).max().unwrap_or(10);
     }
 
-    // Filter relevant connection lines (Focused table by default to prevent visual clutter)
+    // Filter relevant connection lines (field search + focused table)
     let relevant_fks: Vec<(usize, &crate::db::AllForeignKeyInfo)> = app.all_foreign_keys.iter().enumerate().filter(|(_, fk)| {
         if app.show_all_relationships {
+            // In field search mode, only show lines between matching tables
+            if !app.field_search_text.is_empty() {
+                let src_match = field_search_match.contains(&(fk.table_schema.clone(), fk.table_name.clone()));
+                let dst_match = field_search_match.contains(&(fk.foreign_table_schema.clone(), fk.foreign_table_name.clone()));
+                return src_match && dst_match;
+            }
             true
         } else if let Some(ref st) = selected_table {
             (fk.table_schema == st.schema && fk.table_name == st.name)
@@ -1195,7 +1304,17 @@ fn render_relationships(f: &mut Frame, app: &AppState, area: Rect) {
                 .map(|st| (st.schema == fk.table_schema && st.name == fk.table_name) || (st.schema == fk.foreign_table_schema && st.name == fk.foreign_table_name))
                 .unwrap_or(false);
 
-            let line_color = if is_selected_conn { Color::Yellow } else { Color::DarkGray };
+            let is_field_match = !app.field_search_text.is_empty()
+                && field_search_match.contains(&(fk.table_schema.clone(), fk.table_name.clone()))
+                && field_search_match.contains(&(fk.foreign_table_schema.clone(), fk.foreign_table_name.clone()));
+
+            let line_color = if is_selected_conn {
+                Color::Yellow
+            } else if is_field_match {
+                Color::Green
+            } else {
+                Color::DarkGray
+            };
             let line_style = Style::default().fg(line_color);
 
             let max_tracks = ((spacing.saturating_sub(4)) / 2).max(1);
@@ -1384,9 +1503,17 @@ fn render_relationships(f: &mut Frame, app: &AppState, area: Rect) {
 
     let current_table_name = selected_table.map(|st| format!("{}.{}", st.schema, st.name)).unwrap_or_else(|| "None".to_string());
     let view_mode = if app.show_all_relationships { "All Lines" } else { "Focused View" };
+    let field_search_str = if app.is_field_searching {
+        format!(" [Field Search: {}█]", app.field_search_text)
+    } else if !app.field_search_text.is_empty() {
+        format!(" [Field Search: {}]", app.field_search_text)
+    } else {
+        "".to_string()
+    };
     let p = Paragraph::new(lines).block(block.title(format!(
-        " ER Diagram: {} [{}] ",
+        " ER Diagram: {}{} [{}] ",
         current_table_name,
+        field_search_str,
         view_mode
     )));
     f.render_widget(p, right_chunks[0]);

@@ -48,6 +48,8 @@ pub struct AppState {
     pub is_filtering: bool,
     pub filter_data_text: String,
     pub is_filtering_data: bool,
+    pub field_search_text: String,
+    pub is_field_searching: bool,
     pub filtered_table_indices: Vec<usize>,
     pub matcher: nucleo_matcher::Matcher,
 
@@ -115,6 +117,8 @@ impl AppState {
             is_filtering: false,
             filter_data_text: String::new(),
             is_filtering_data: false,
+            field_search_text: String::new(),
+            is_field_searching: false,
             sql_input: "SELECT * FROM information_schema.tables LIMIT 10;".to_string(),
             query_result: None,
             query_error: None,

@@ -14,6 +14,34 @@ pub enum AppAction {
 }
 
 pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
+    if app.is_field_searching {
+        let mut changed = false;
+        match key.code {
+            KeyCode::Esc => {
+                app.is_field_searching = false;
+                app.field_search_text.clear();
+            }
+            KeyCode::Enter => {
+                app.is_field_searching = false;
+            }
+            KeyCode::Backspace => {
+                app.field_search_text.pop();
+                changed = true;
+            }
+            KeyCode::Char(c) => {
+                app.field_search_text.push(c);
+                changed = true;
+            }
+            _ => {}
+        }
+        if changed {
+            app.data_scroll_offset = 0;
+            app.selected_data_row = 0;
+            app.selected_data_col = 0;
+        }
+        return AppAction::None;
+    }
+
     if app.is_filtering_data {
         let mut changed = false;
         match key.code {
@@ -181,7 +209,10 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
     match key.code {
         KeyCode::Char('q') => return AppAction::Quit,
         KeyCode::Esc => {
-            if app.is_fullscreen_data {
+            if app.is_field_searching {
+                app.is_field_searching = false;
+                app.field_search_text.clear();
+            } else if app.is_fullscreen_data {
                 app.is_fullscreen_data = false;
                 app.focused_panel = FocusedPanel::Tables;
             } else {
@@ -205,11 +236,21 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
             }
         }
         KeyCode::Char('/') => {
-            if app.active_tab == ActiveTab::Browser || app.active_tab == ActiveTab::Relationships {
+            if app.active_tab == ActiveTab::Browser {
                 if app.is_fullscreen_data {
                     app.is_filtering_data = !app.is_filtering_data;
+                } else if app.focused_panel == FocusedPanel::DataPreview {
+                    app.is_field_searching = !app.is_field_searching;
+                    if app.is_field_searching {
+                        app.is_filtering = false;
+                    }
                 } else {
                     app.is_filtering = !app.is_filtering;
+                }
+            } else if app.active_tab == ActiveTab::Relationships {
+                app.is_field_searching = !app.is_field_searching;
+                if app.is_field_searching {
+                    app.is_filtering = false;
                 }
             }
         }
