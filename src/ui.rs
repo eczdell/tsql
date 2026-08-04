@@ -201,9 +201,11 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
         .unwrap_or("None");
 
     let field_search_display = if app.is_field_searching {
-        format!(" [Field Search: {}█]", app.field_search_text)
+        let match_count = app.columns.iter().filter(|col| col.name.to_lowercase().contains(&app.field_search_text.to_lowercase())).count();
+        format!(" [Field Search: {}█ {}]", app.field_search_text, match_count)
     } else if !app.field_search_text.is_empty() {
-        format!(" [Field Search: {}]", app.field_search_text)
+        let match_count = app.columns.iter().filter(|col| col.name.to_lowercase().contains(&app.field_search_text.to_lowercase())).count();
+        format!(" [Field Search: {} {}]", app.field_search_text, match_count)
     } else {
         String::new()
     };
@@ -370,9 +372,11 @@ fn render_browser(f: &mut Frame, app: &AppState, area: Rect) {
         };
 
         let field_search_display = if app.is_field_searching {
-            format!(" [Field Search: {}█]", app.field_search_text)
+            let match_count = app.columns.iter().filter(|col| col.name.to_lowercase().contains(&app.field_search_text.to_lowercase())).count();
+            format!(" [Field Search: {}█ {}]", app.field_search_text, match_count)
         } else if !app.field_search_text.is_empty() {
-            format!(" [Field Search: {}]", app.field_search_text)
+            let match_count = app.columns.iter().filter(|col| col.name.to_lowercase().contains(&app.field_search_text.to_lowercase())).count();
+            format!(" [Field Search: {} {}]", app.field_search_text, match_count)
         } else {
             "".to_string()
         };
@@ -565,9 +569,11 @@ fn render_fullscreen_data(f: &mut Frame, app: &AppState, area: Rect) {
         };
 
         let field_search_display = if app.is_field_searching {
-            format!(" [Field Search: {}█]", app.field_search_text)
+            let match_count = app.columns.iter().filter(|col| col.name.to_lowercase().contains(&app.field_search_text.to_lowercase())).count();
+            format!(" [Field Search: {}█ {}]", app.field_search_text, match_count)
         } else if !app.field_search_text.is_empty() {
-            format!(" [Field Search: {}]", app.field_search_text)
+            let match_count = app.columns.iter().filter(|col| col.name.to_lowercase().contains(&app.field_search_text.to_lowercase())).count();
+            format!(" [Field Search: {} {}]", app.field_search_text, match_count)
         } else {
             "".to_string()
         };
@@ -1080,9 +1086,11 @@ fn render_relationships(f: &mut Frame, app: &AppState, area: Rect) {
             .collect();
 
         let filter_display = if app.is_field_searching {
-            format!(" [Field Search: {}█]", app.field_search_text)
+            let match_count = field_search_match.len();
+            format!(" [Field Search: {}█ {}]", app.field_search_text, match_count)
         } else if !app.field_search_text.is_empty() {
-            format!(" [Field Search: {}]", app.field_search_text)
+            let match_count = field_search_match.len();
+            format!(" [Field Search: {} {}]", app.field_search_text, match_count)
         } else if app.is_filtering {
             format!(" [{}█]", app.filter_text)
         } else if !app.filter_text.is_empty() {
@@ -1517,9 +1525,11 @@ fn render_relationships(f: &mut Frame, app: &AppState, area: Rect) {
     let current_table_name = selected_table.map(|st| format!("{}.{}", st.schema, st.name)).unwrap_or_else(|| "None".to_string());
     let view_mode = if app.show_all_relationships { "All Lines" } else { "Focused View" };
     let field_search_str = if app.is_field_searching {
-        format!(" [Field Search: {}█]", app.field_search_text)
+        let match_count = field_search_match.len();
+        format!(" [Field Search: {}█ {}]", app.field_search_text, match_count)
     } else if !app.field_search_text.is_empty() {
-        format!(" [Field Search: {}]", app.field_search_text)
+        let match_count = field_search_match.len();
+        format!(" [Field Search: {} {}]", app.field_search_text, match_count)
     } else {
         "".to_string()
     };

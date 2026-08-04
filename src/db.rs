@@ -1,4 +1,5 @@
 use tokio_postgres::{Client, NoTls};
+use tokio_postgres_rustls::MakeRustlsConnect;
 use crate::config::ConnectionConfig;
 
 use serde::{Deserialize, Serialize};
@@ -42,14 +43,39 @@ pub async fn connect(cfg: &ConnectionConfig) -> Result<Client, Box<dyn std::erro
     if let Some(ref pass) = cfg.password {
         conn_str.push_str(&format!(" password={}", pass));
     }
+    if let Some(ref sslmode) = cfg.sslmode {
+        conn_str.push_str(&format!(" sslmode={}", sslmode));
+    }
 
-    let (client, connection) = tokio_postgres::connect(&conn_str, NoTls).await?;
-    
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
+    let client = if cfg.sslmode.as_deref() == Some("disable") {
+        let (client, connection) = tokio_postgres::connect(&conn_str, NoTls).await?;
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("Connection error: {}", e);
+            }
+        });
+        client
+    } else {
+        let mut config = rustls::ClientConfig::new();
+        let mut cert_file = std::io::BufReader::new(
+            std::fs::File::open("/etc/ssl/certs/ca-certificates.crt").unwrap_or_else(|_| {
+                std::fs::File::open("/etc/pki/tls/certs/ca-bundle.crt").unwrap_or_else(|_| {
+                    std::fs::File::open("/etc/ssl/ca-bundle.pem").unwrap_or_else(|_| {
+                        std::fs::File::open("/etc/ssl/cert.pem").unwrap()
+                    })
+                })
+            })
+        );
+        config.root_store.add_pem_file(&mut cert_file).ok();
+        let tls_config = config;
+        let (client, connection) = tokio_postgres::connect(&conn_str, MakeRustlsConnect::new(tls_config)).await?;
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("Connection error: {}", e);
+            }
+        });
+        client
+    };
 
     Ok(client)
 }
