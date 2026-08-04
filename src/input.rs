@@ -167,19 +167,55 @@ pub fn handle_key(key: KeyEvent, app: &mut AppState) -> AppAction {
         }
         match key.code {
             KeyCode::Esc => {
-                app.focused_panel = FocusedPanel::Tables;
+                if app.is_completing {
+                    app.is_completing = false;
+                } else {
+                    app.focused_panel = FocusedPanel::Tables;
+                }
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if app.is_completing {
+                    app.completion_idx = (app.completion_idx + 1).min(app.completions.len().saturating_sub(1));
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if app.is_completing {
+                    app.completion_idx = app.completion_idx.saturating_sub(1);
+                }
             }
             KeyCode::Char(c) => {
                 app.sql_input.push(c);
+                app.is_completing = false;
             }
             KeyCode::Backspace => {
                 app.sql_input.pop();
+                app.is_completing = false;
             }
             KeyCode::Enter => {
-                app.sql_input.push('\n');
+                if app.is_completing {
+                    if app.completion_idx < app.completions.len() {
+                        let completion = &app.completions[app.completion_idx];
+                        let prefix = app.completion_text.clone();
+                        let suffix = completion.strip_prefix(&prefix).unwrap_or(completion);
+                        app.sql_input.push_str(suffix);
+                        app.is_completing = false;
+                    }
+                } else {
+                    app.sql_input.push('\n');
+                }
             }
             KeyCode::Tab => {
-                app.focused_panel = FocusedPanel::Results;
+                if app.is_completing {
+                    app.completion_idx = (app.completion_idx + 1).min(app.completions.len().saturating_sub(1));
+                } else {
+                    let prefix = app.get_current_word_prefix();
+                    if !prefix.is_empty() {
+                        app.completions = app.get_completions(&prefix);
+                        app.completion_text = prefix;
+                        app.completion_idx = 0;
+                        app.is_completing = !app.completions.is_empty();
+                    }
+                }
             }
             _ => {}
         }

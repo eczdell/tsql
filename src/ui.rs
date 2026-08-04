@@ -703,6 +703,52 @@ fn render_query_runner(f: &mut Frame, app: &AppState, area: Rect) {
         .wrap(Wrap { trim: false });
     f.render_widget(editor, chunks[0]);
 
+    if app.is_completing && !app.completions.is_empty() {
+        let popup_area = if chunks[0].height > 10 {
+            Rect::new(
+                chunks[0].x + 2,
+                chunks[0].y + chunks[0].height - 6,
+                std::cmp::min(app.completions.len() as u16 + 2, 12),
+                std::cmp::min(app.completions.len() as u16 + 2, 6),
+            )
+        } else {
+            Rect::new(
+                chunks[0].x + 2,
+                chunks[0].y + chunks[0].height / 2,
+                std::cmp::min(app.completions.len() as u16 + 2, 12),
+                std::cmp::min(app.completions.len() as u16 + 2, 6),
+            )
+        };
+
+        let mut comp_lines = vec![];
+        let start = app.completion_idx.saturating_sub(3);
+        let end = std::cmp::min(start + 6, app.completions.len());
+        for (i, comp) in app.completions[start..end].iter().enumerate() {
+            let actual_idx = start + i;
+            let is_selected = actual_idx == app.completion_idx;
+            let prefix = if is_selected { "▸ " } else { "  " };
+            let style = if is_selected {
+                Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            comp_lines.push(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(Color::Yellow)),
+                Span::styled(comp.as_str(), style),
+            ]));
+        }
+
+        let comp_popup = Paragraph::new(comp_lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Completions ")
+                    .border_style(Style::default().fg(Color::Green))
+                    .style(Style::default().bg(Color::DarkGray)),
+            );
+        f.render_widget(comp_popup, popup_area);
+    }
+
     // Results or Error
     let res_block = Block::default()
         .borders(Borders::ALL)
@@ -908,6 +954,7 @@ fn render_help(f: &mut Frame, _app: &AppState, area: Rect) {
         Line::from(vec![Span::styled("c             ", Style::default().fg(Color::Yellow)), Span::raw("Connect/reconnect to selected connection")]),
         Line::from(vec![Span::styled("r             ", Style::default().fg(Color::Yellow)), Span::raw("Refresh database schemas & table list")]),
         Line::from(vec![Span::styled("Ctrl+E        ", Style::default().fg(Color::Yellow)), Span::raw("Execute SQL query in Query Runner")]),
+        Line::from(vec![Span::styled("Tab           ", Style::default().fg(Color::Yellow)), Span::raw("Auto-complete SQL keywords, tables, columns")]),
         Line::from(vec![Span::styled("q, Esc, Ctrl+C", Style::default().fg(Color::Yellow)), Span::raw("Quit & close application")]),
         Line::from(""),
         Line::from(Span::styled("Config file location:", Style::default().fg(Color::DarkGray))),

@@ -2,6 +2,20 @@ use crate::config::{Config, ConnectionConfig};
 use crate::db::{ColumnInfo, QueryResult, TableInfo};
 use tokio_postgres::Client;
 
+const SQL_KEYWORDS: &[&str] = &[
+    "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE",
+    "CREATE", "TABLE", "DROP", "ALTER", "ADD", "COLUMN", "INDEX", "VIEW", "JOIN",
+    "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "CROSS", "ON", "AND", "OR", "NOT",
+    "NULL", "IS", "LIKE", "IN", "BETWEEN", "EXISTS", "HAVING", "GROUP", "BY",
+    "ORDER", "ASC", "DESC", "LIMIT", "OFFSET", "UNION", "ALL", "DISTINCT", "AS",
+    "CASE", "WHEN", "THEN", "ELSE", "END", "COUNT", "SUM", "AVG", "MIN", "MAX",
+    "COALESCE", "CAST", "CONVERT", "SUBSTRING", "TRIM", "UPPER", "LOWER", "NOW",
+    "CURRENT_DATE", "CURRENT_TIMESTAMP", "BEGIN", "COMMIT", "ROLLBACK", "TRANSACTION",
+    "GRANT", "REVOKE", "PRIMARY", "KEY", "FOREIGN", "REFERENCES", "CONSTRAINT",
+    "DEFAULT", "CHECK", "UNIQUE", "SERIAL", "BOOLEAN", "INTEGER", "VARCHAR", "TEXT",
+    "TIMESTAMP", "DATE", "FLOAT", "DOUBLE", "DECIMAL", "BOOL", "INT", "BIGINT",
+];
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum FocusedPanel {
     Tables,
@@ -61,6 +75,10 @@ pub struct AppState {
     pub selected_query_row: usize,
     pub selected_query_col: usize,
     pub query_col_offset: usize,
+    pub is_completing: bool,
+    pub completion_idx: usize,
+    pub completion_text: String,
+    pub completions: Vec<String>,
 
     // Table Data View & Grid Navigation
     pub table_data_result: Option<QueryResult>,
@@ -126,6 +144,10 @@ impl AppState {
             selected_query_row: 0,
             selected_query_col: 0,
             query_col_offset: 0,
+            is_completing: false,
+            completion_idx: 0,
+            completion_text: String::new(),
+            completions: Vec::new(),
             table_data_result: None,
             data_page: 0,
             data_scroll_offset: 0,
@@ -198,6 +220,40 @@ impl AppState {
             let idx = self.selected_conn_idx.min(self.config.connections.len() - 1);
             Some(&self.config.connections[idx])
         }
+    }
+
+    pub fn get_completions(&self, prefix: &str) -> Vec<String> {
+        let query = prefix.to_lowercase();
+        let mut results = Vec::new();
+        for kw in SQL_KEYWORDS {
+            if kw.to_lowercase().starts_with(&query) {
+                results.push(kw.to_string());
+            }
+        }
+        for tbl in &self.tables {
+            if tbl.name.to_lowercase().starts_with(&query) {
+                results.push(format!("{}.{}", tbl.schema, tbl.name));
+            }
+        }
+        for col in &self.columns {
+            if col.name.to_lowercase().starts_with(&query) {
+                results.push(col.name.clone());
+            }
+        }
+        results.sort();
+        results.dedup();
+        results.truncate(50);
+        results
+    }
+
+    pub fn get_current_word_prefix(&self) -> String {
+        let input = &self.sql_input;
+        let cursor = input.len();
+        let before_cursor = &input[..cursor];
+        let start = before_cursor.rfind(|c: char| c.is_whitespace() || c == '(' || c == ',' || c == ';' || c == '=')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        before_cursor[start..].to_string()
     }
 }
 
